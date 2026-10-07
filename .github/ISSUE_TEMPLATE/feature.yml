@@ -1,0 +1,16 @@
+name: Feature request
+description: Propose an appliance workflow or integration
+title: "[feature] "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes: {label: Operator problem}
+    validations: {required: true}
+  - type: textarea
+    id: workflow
+    attributes: {label: Desired workflow and user-visible result}
+    validations: {required: true}
+  - type: textarea
+    id: constraints
+    attributes: {label: Pi/resource, privacy, security, and compatibility constraints}

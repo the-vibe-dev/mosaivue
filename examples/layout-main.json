@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "background": "#05080c",
+  "grid_columns": 12,
+  "grid_rows": 12,
+  "slots": [
+    {"id":"driveway","name":"Driveway","type":"fixed","x":0,"y":0,"width":0.65,"height":1,"z_index":0,"enabled":true,"camera_id":"CAMERA_DRIVEWAY","rotation_group_id":null,"selected_camera_id":null,"stream_profile_id":null,"stream_selection":"automatic","aspect_mode":"cover","crop":{"top":0,"right":0,"bottom":0,"left":0},"background":"#090d12","border":"#27313c","border_width":0,"label":"Driveway","title_position":"bottom-left","muted":true,"locked":false,"opacity":1,"pixel_override":null},
+    {"id":"front","name":"Front Door","type":"fixed","x":0.65,"y":0,"width":0.35,"height":0.34,"z_index":0,"enabled":true,"camera_id":"CAMERA_FRONT","rotation_group_id":null,"selected_camera_id":null,"stream_profile_id":null,"stream_selection":"automatic","aspect_mode":"cover","crop":{"top":0,"right":0,"bottom":0,"left":0},"background":"#090d12","border":"#27313c","border_width":0,"label":"Front Door","title_position":"bottom-left","muted":true,"locked":false,"opacity":1,"pixel_override":null}
+  ]
+}

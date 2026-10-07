@@ -1,0 +1,18 @@
+# Create a dedicated authenticated integration flow before production use.
+# Mosaivue uses a session cookie plus CSRF token; do not hard-code administrator
+# credentials in Home Assistant configuration. This example documents endpoints.
+rest_command:
+  mosaivue_activate_night:
+    url: "http://mosaivue.local:8080/api/v1/layouts/LAYOUT_ID/activate"
+    method: POST
+    headers:
+      Cookie: !secret mosaivue_session_cookie
+      X-CSRF-Token: !secret mosaivue_csrf_token
+  mosaivue_focus_driveway:
+    url: "http://mosaivue.local:8080/api/v1/renderer/focus"
+    method: POST
+    content_type: "application/json"
+    payload: '{"camera_id":"CAMERA_ID","aspect_mode":"cover"}'
+    headers:
+      Cookie: !secret mosaivue_session_cookie
+      X-CSRF-Token: !secret mosaivue_csrf_token

@@ -1,0 +1,14 @@
+{
+  "bind": "0.0.0.0",
+  "port": 8080,
+  "renderer_backend": "auto",
+  "renderer_sink": "auto",
+  "output_name": null,
+  "output_mode": null,
+  "web_preview_enabled": true,
+  "update_checks_enabled": false,
+  "session_hours": 12,
+  "log_level": "INFO",
+  "schedule_enabled": true,
+  "profile": "balanced"
+}

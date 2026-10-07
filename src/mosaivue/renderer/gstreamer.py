@@ -1,0 +1,782 @@
+from __future__ import annotations
+
+import concurrent.futures
+import logging
+import os
+import threading
+import time
+from dataclasses import dataclass
+from typing import Any, Callable, TypeVar
+from urllib.parse import urlsplit
+
+from .base import HealthState, Rect, RendererBackend, RendererCapabilities, StreamHealth, StreamSpec
+
+LOGGER = logging.getLogger(__name__)
+T = TypeVar("T")
+
+
+class GStreamerUnavailable(RuntimeError):
+    pass
+
+
+def _import_gst() -> tuple[Any, Any, Any]:
+    try:
+        import gi
+
+        gi.require_version("Gst", "1.0")
+        from gi.repository import GLib, Gst, GObject
+
+        Gst.init(None)
+        return Gst, GLib, GObject
+    except (ImportError, ValueError) as exc:
+        raise GStreamerUnavailable(
+            "Install python3-gi, gir1.2-gstreamer-1.0 and GStreamer plugins"
+        ) from exc
+
+
+def _request_pad(element: Any, template: str) -> Any:
+    """Request a pad on GStreamer releases before and after 1.20."""
+    request = getattr(element, "request_pad_simple", None)
+    if request is None:
+        request = element.get_request_pad
+    return request(template)
+
+
+@dataclass
+class _SlotRuntime:
+    spec: StreamSpec
+    selector: Any
+    selector_placeholder_pad: Any
+    selector_camera_pad: Any | None
+    placeholder_source: Any
+    placeholder_caps: Any
+    placeholder_text: Any
+    queue: Any
+    convert: Any
+    cropper: Any
+    scale: Any
+    capsfilter: Any
+    title_overlay: Any
+    compositor_pad: Any
+    source: Any | None = None
+    source_queue: Any | None = None
+    frame_probe_id: int | None = None
+    reconnect_source_id: int | None = None
+
+
+class GStreamerRenderer(RendererBackend):
+    """Single-pipeline GStreamer compositor with isolated, replaceable input branches."""
+
+    def __init__(self) -> None:
+        self.Gst, self.GLib, self.GObject = _import_gst()
+        self._pipeline: Any | None = None
+        self._compositor: Any | None = None
+        self._sink: Any | None = None
+        self._output_scale: Any | None = None
+        self._output_caps: Any | None = None
+        self._loop: Any | None = None
+        self._thread: threading.Thread | None = None
+        self._ready = threading.Event()
+        self._startup_error: BaseException | None = None
+        self._slots: dict[str, _SlotRuntime] = {}
+        self._health: dict[str, StreamHealth] = {}
+        self._output_width = 1920
+        self._output_height = 1080
+        self._sink_name = "auto"
+        self._started_at: float | None = None
+        self._bus_watch_id: int | None = None
+        self._watchdog_source_id: int | None = None
+
+    @classmethod
+    def detect(cls) -> RendererCapabilities:
+        try:
+            Gst, _, _ = _import_gst()
+        except GStreamerUnavailable as exc:
+            return RendererCapabilities(name="gstreamer", available=False, reason=str(exc))
+        required = [
+            "compositor",
+            "uridecodebin",
+            "rtspsrc",
+            "videotestsrc",
+            "input-selector",
+            "queue",
+            "videoconvert",
+            "videocrop",
+            "aspectratiocrop",
+            "videoscale",
+            "capsfilter",
+            "textoverlay",
+        ]
+        missing = [name for name in required if Gst.ElementFactory.find(name) is None]
+        sinks = [
+            name
+            for name in ("kmssink", "waylandsink", "ximagesink", "fbdevsink", "autovideosink")
+            if Gst.ElementFactory.find(name)
+        ]
+        decoders = [
+            name
+            for name in ("v4l2h264dec", "v4l2h265dec", "omxh264dec", "avdec_h264", "avdec_h265")
+            if Gst.ElementFactory.find(name)
+        ]
+        return RendererCapabilities(
+            name="gstreamer",
+            available=not missing and bool(sinks),
+            reason=f"Missing GStreamer elements: {', '.join(missing)}" if missing else None,
+            sinks=sinks,
+            decoders=decoders,
+            dynamic_geometry=True,
+            dynamic_source_replace=True,
+            per_stream_recovery=True,
+            snapshots=False,
+            hardware_decode=any(name.startswith(("v4l2", "omx")) for name in decoders),
+        )
+
+    def capabilities(self) -> RendererCapabilities:
+        return self.detect()
+
+    def initialize(self, *, width: int, height: int, sink: str = "auto") -> None:
+        if self._thread and self._thread.is_alive():
+            return
+        self._output_width = width
+        self._output_height = height
+        self._sink_name = sink
+        self._ready.clear()
+        self._thread = threading.Thread(target=self._thread_main, name="mosaivue-gstreamer", daemon=True)
+        self._thread.start()
+        if not self._ready.wait(timeout=15):
+            raise TimeoutError("GStreamer renderer did not initialize")
+        if self._startup_error:
+            raise RuntimeError("GStreamer renderer initialization failed") from self._startup_error
+
+    def _thread_main(self) -> None:
+        try:
+            self._loop = self.GLib.MainLoop()
+            self._initialize_pipeline()
+            self._ready.set()
+            self._loop.run()
+        except BaseException as exc:
+            self._startup_error = exc
+            LOGGER.exception("GStreamer main loop failed")
+            self._ready.set()
+
+    def _initialize_pipeline(self) -> None:
+        Gst = self.Gst
+        pipeline = Gst.Pipeline.new("mosaivue")
+        compositor = Gst.ElementFactory.make("compositor", "wall")
+        convert = Gst.ElementFactory.make("videoconvert", "output-convert")
+        output_scale = Gst.ElementFactory.make("videoscale", "output-scale")
+        output_caps = Gst.ElementFactory.make("capsfilter", "output-caps")
+        sink = self._make_sink(self._sink_name)
+        if not all((pipeline, compositor, convert, output_scale, output_caps, sink)):
+            raise GStreamerUnavailable("Unable to create the GStreamer output pipeline")
+        compositor.set_property("background", "black")
+        if compositor.find_property("latency"):
+            compositor.set_property("latency", 100_000_000)
+        output_caps.set_property(
+            "caps",
+            Gst.Caps.from_string(
+                f"video/x-raw,width={self._output_width},height={self._output_height},framerate=5/1,pixel-aspect-ratio=1/1"
+            ),
+        )
+        for element in (compositor, convert, output_scale, output_caps, sink):
+            pipeline.add(element)
+        if not compositor.link(convert) or not convert.link(output_scale) or not output_scale.link(output_caps) or not output_caps.link(sink):
+            raise RuntimeError("Unable to link GStreamer compositor output")
+        bus = pipeline.get_bus()
+        bus.add_signal_watch()
+        bus.connect("message", self._on_bus_message)
+        self._pipeline = pipeline
+        self._compositor = compositor
+        self._sink = sink
+        self._output_scale = output_scale
+        self._output_caps = output_caps
+        self._started_at = time.monotonic()
+        self._watchdog_source_id = self.GLib.timeout_add_seconds(2, self._watchdog_tick)
+        result = pipeline.set_state(Gst.State.PLAYING)
+        if result == Gst.StateChangeReturn.FAILURE:
+            raise RuntimeError("GStreamer output pipeline refused PLAYING state")
+
+    def set_output_size(self, width: int, height: int) -> None:
+        self._call(self._set_output_size, width, height)
+
+    def _set_output_size(self, width: int, height: int) -> None:
+        if width < 1 or height < 1:
+            raise ValueError("Output dimensions must be positive")
+        self._output_width = width
+        self._output_height = height
+        if self._output_caps is not None:
+            self._output_caps.set_property(
+                "caps",
+                self.Gst.Caps.from_string(
+                    f"video/x-raw,width={width},height={height},framerate=5/1,pixel-aspect-ratio=1/1"
+                ),
+            )
+
+    def _make_sink(self, requested: str) -> Any:
+        candidates: list[str]
+        if requested != "auto":
+            candidates = [requested]
+        else:
+            candidates = []
+            if os.path.exists("/dev/dri/card0"):
+                candidates.append("kmssink")
+            if os.environ.get("WAYLAND_DISPLAY"):
+                candidates.append("waylandsink")
+            if os.environ.get("DISPLAY"):
+                candidates.append("ximagesink")
+            if os.path.exists("/dev/fb0"):
+                candidates.append("fbdevsink")
+            candidates.append("autovideosink")
+        for name in candidates:
+            sink = self.Gst.ElementFactory.make(name, "display")
+            if sink:
+                if sink.find_property("sync"):
+                    sink.set_property("sync", False)
+                if sink.find_property("force-modesetting") and name == "kmssink":
+                    sink.set_property("force-modesetting", False)
+                LOGGER.info("Selected GStreamer sink %s", name)
+                return sink
+        raise GStreamerUnavailable(f"No usable GStreamer sink found from {candidates}")
+
+    def _call(self, function: Callable[..., T], *args: Any, timeout: float = 10, **kwargs: Any) -> T:
+        if self._loop is None:
+            raise RuntimeError("Renderer is not initialized")
+        future: concurrent.futures.Future[T] = concurrent.futures.Future()
+
+        def invoke() -> bool:
+            try:
+                future.set_result(function(*args, **kwargs))
+            except BaseException as exc:
+                future.set_exception(exc)
+            return False
+
+        self.GLib.idle_add(invoke)
+        return future.result(timeout=timeout)
+
+    def add_stream(self, spec: StreamSpec) -> None:
+        self._call(self._add_stream, spec)
+
+    def _add_stream(self, spec: StreamSpec) -> None:
+        if spec.slot_id in self._slots:
+            raise ValueError(f"Slot {spec.slot_id} already exists")
+        assert self._pipeline is not None and self._compositor is not None
+        Gst = self.Gst
+        selector = Gst.ElementFactory.make("input-selector", f"selector-{spec.slot_id}")
+        placeholder_source = Gst.ElementFactory.make("videotestsrc", f"placeholder-{spec.slot_id}")
+        placeholder_caps = Gst.ElementFactory.make("capsfilter", f"placeholder-caps-{spec.slot_id}")
+        placeholder_text = Gst.ElementFactory.make("textoverlay", f"placeholder-text-{spec.slot_id}")
+        queue = Gst.ElementFactory.make("queue", f"post-queue-{spec.slot_id}")
+        convert = Gst.ElementFactory.make("videoconvert", f"convert-{spec.slot_id}")
+        cropper = Gst.ElementFactory.make("videocrop", f"manual-crop-{spec.slot_id}")
+        scale = Gst.ElementFactory.make("videoscale", f"scale-{spec.slot_id}")
+        capsfilter = Gst.ElementFactory.make("capsfilter", f"caps-{spec.slot_id}")
+        title_overlay = Gst.ElementFactory.make("textoverlay", f"title-{spec.slot_id}")
+        elements = [
+            selector,
+            placeholder_source,
+            placeholder_caps,
+            placeholder_text,
+            queue,
+            convert,
+            cropper,
+            scale,
+            capsfilter,
+            title_overlay,
+        ]
+        if not all(elements):
+            raise RuntimeError("Required GStreamer slot elements are unavailable")
+        placeholder_source.set_property("is-live", True)
+        placeholder_source.set_property("pattern", "black")
+        placeholder_caps.set_property(
+            "caps", Gst.Caps.from_string("video/x-raw,width=640,height=360,framerate=5/1")
+        )
+        placeholder_text.set_property("text", f"{spec.camera_name}\nConnecting…")
+        placeholder_text.set_property("valignment", "center")
+        placeholder_text.set_property("halignment", "center")
+        placeholder_text.set_property("font-desc", "Sans 18")
+        queue.set_property("leaky", 2)
+        queue.set_property("max-size-buffers", 2)
+        title_overlay.set_property("font-desc", "Sans 14")
+        title_overlay.set_property("shaded-background", True)
+        for element in elements:
+            self._pipeline.add(element)
+        if not placeholder_source.link(placeholder_caps) or not placeholder_caps.link(placeholder_text):
+            raise RuntimeError("Unable to link placeholder branch")
+        placeholder_pad = _request_pad(selector, "sink_%u")
+        if placeholder_pad is None:
+            raise RuntimeError("Unable to request placeholder selector pad")
+        if placeholder_text.get_static_pad("src").link(placeholder_pad) != Gst.PadLinkReturn.OK:
+            raise RuntimeError("Unable to connect placeholder branch to selector")
+        chain = [selector, queue, convert, cropper, scale, capsfilter, title_overlay]
+        for first, second in zip(chain, chain[1:]):
+            if not first.link(second):
+                raise RuntimeError(f"Unable to link slot element {first.name} to {second.name}")
+        compositor_pad = _request_pad(self._compositor, "sink_%u")
+        if compositor_pad is None:
+            raise RuntimeError("Unable to request compositor pad")
+        if title_overlay.get_static_pad("src").link(compositor_pad) != Gst.PadLinkReturn.OK:
+            raise RuntimeError("Unable to connect slot to compositor")
+        runtime = _SlotRuntime(
+            spec=spec,
+            selector=selector,
+            selector_placeholder_pad=placeholder_pad,
+            selector_camera_pad=None,
+            placeholder_source=placeholder_source,
+            placeholder_caps=placeholder_caps,
+            placeholder_text=placeholder_text,
+            queue=queue,
+            convert=convert,
+            cropper=cropper,
+            scale=scale,
+            capsfilter=capsfilter,
+            title_overlay=title_overlay,
+            compositor_pad=compositor_pad,
+        )
+        self._slots[spec.slot_id] = runtime
+        self._health[spec.slot_id] = StreamHealth(slot_id=spec.slot_id, camera_id=spec.camera_id)
+        self._apply_geometry(runtime)
+        self._apply_label(runtime)
+        selector.set_property("active-pad", placeholder_pad)
+        for element in elements:
+            element.sync_state_with_parent()
+        self._create_source_branch(runtime)
+
+    def _create_source_branch(self, runtime: _SlotRuntime) -> None:
+        Gst = self.Gst
+        assert self._pipeline is not None
+        source = Gst.ElementFactory.make("uridecodebin", f"source-{runtime.spec.slot_id}")
+        source_queue = Gst.ElementFactory.make("queue", f"source-queue-{runtime.spec.slot_id}")
+        if not source or not source_queue:
+            raise RuntimeError("Unable to create RTSP source branch")
+        source.set_property("uri", runtime.spec.url)
+        if source.find_property("use-buffering"):
+            source.set_property("use-buffering", False)
+        source.connect("pad-added", self._on_source_pad_added, runtime.spec.slot_id)
+        source.connect("source-setup", self._on_source_setup, runtime.spec.slot_id)
+        source_queue.set_property("leaky", 2)
+        source_queue.set_property("max-size-buffers", 2)
+        self._pipeline.add(source)
+        self._pipeline.add(source_queue)
+        camera_pad = _request_pad(runtime.selector, "sink_%u")
+        if camera_pad is None:
+            raise RuntimeError("Unable to request camera selector pad")
+        if source_queue.get_static_pad("src").link(camera_pad) != Gst.PadLinkReturn.OK:
+            raise RuntimeError("Unable to link camera queue to selector")
+        runtime.source = source
+        runtime.source_queue = source_queue
+        runtime.selector_camera_pad = camera_pad
+        probe_pad = source_queue.get_static_pad("src")
+        runtime.frame_probe_id = probe_pad.add_probe(
+            Gst.PadProbeType.BUFFER, self._on_frame, runtime.spec.slot_id
+        )
+        source.sync_state_with_parent()
+        source_queue.sync_state_with_parent()
+        health = self._health[runtime.spec.slot_id]
+        health.state = HealthState.connecting
+        health.detail = "Connecting to camera"
+
+    def _on_source_setup(self, _: Any, source: Any, slot_id: str) -> None:
+        runtime = self._slots.get(slot_id)
+        if not runtime:
+            return
+        latency_map = {"ultra-low": 50, "low": 120, "normal": 300, "stable": 800}
+        if source.find_property("latency"):
+            source.set_property("latency", latency_map.get(runtime.spec.latency_profile, 120))
+        if source.find_property("drop-on-latency"):
+            source.set_property("drop-on-latency", runtime.spec.latency_profile in {"ultra-low", "low"})
+        if source.find_property("protocols"):
+            # GstRtsp.RTSPLowerTrans enum values: UDP=1, UDP_MCAST=2, TCP=4.
+            if urlsplit(runtime.spec.url).scheme.lower() == "rtsps" or runtime.spec.transport == "tcp":
+                source.set_property("protocols", 4)
+            elif runtime.spec.transport == "udp":
+                source.set_property("protocols", 1)
+
+    def _on_source_pad_added(self, _: Any, pad: Any, slot_id: str) -> None:
+        runtime = self._slots.get(slot_id)
+        if not runtime or not runtime.source_queue:
+            return
+        caps = pad.get_current_caps() or pad.query_caps(None)
+        if not caps or not caps.to_string().startswith("video/"):
+            return
+        sink_pad = runtime.source_queue.get_static_pad("sink")
+        if not sink_pad.is_linked():
+            result = pad.link(sink_pad)
+            if result != self.Gst.PadLinkReturn.OK:
+                self._mark_offline(slot_id, f"Video pad link failed: {result.value_nick}")
+
+    def _on_frame(self, pad: Any, __: Any, slot_id: str) -> Any:
+        runtime = self._slots.get(slot_id)
+        health = self._health.get(slot_id)
+        if runtime and health:
+            health.last_frame_monotonic = time.monotonic()
+            health.decoded_frames += 1
+            health.detail = None
+            if runtime.spec.source_width is None or runtime.spec.source_height is None:
+                caps = pad.get_current_caps()
+                structure = caps.get_structure(0) if caps and caps.get_size() else None
+                if structure:
+                    width = structure.get_value("width")
+                    height = structure.get_value("height")
+                    if isinstance(width, int) and isinstance(height, int):
+                        runtime.spec.source_width = width
+                        runtime.spec.source_height = height
+                        self.GLib.idle_add(self._apply_geometry, runtime)
+            if health.state != HealthState.live:
+                health.state = HealthState.live
+                health.reconnect_backoff_seconds = 1.0
+                self.GLib.idle_add(self._activate_camera_pad, slot_id)
+        return self.Gst.PadProbeReturn.OK
+
+    def _activate_camera_pad(self, slot_id: str) -> bool:
+        runtime = self._slots.get(slot_id)
+        health = self._health.get(slot_id)
+        if runtime and health and health.state == HealthState.live and runtime.selector_camera_pad:
+            runtime.selector.set_property("active-pad", runtime.selector_camera_pad)
+        return False
+
+    def _apply_geometry(self, runtime: _SlotRuntime) -> None:
+        rect = runtime.spec.rect
+        pad = runtime.compositor_pad
+        for property_name, value in (
+            ("xpos", rect.x),
+            ("ypos", rect.y),
+            ("width", rect.width),
+            ("height", rect.height),
+            ("zorder", runtime.spec.z_index),
+            ("alpha", runtime.spec.opacity),
+        ):
+            if pad.find_property(property_name):
+                pad.set_property(property_name, value)
+        if pad.find_property("sizing-policy"):
+            # 1 is keep-aspect-ratio in GstVideo.VideoAggregatorPad.
+            pad.set_property("sizing-policy", 1 if runtime.spec.aspect_mode in {"contain", "native"} else 0)
+        crop = runtime.spec.crop or {}
+        source_width = runtime.spec.source_width
+        source_height = runtime.spec.source_height
+        crop_pixels = {"top": 0, "right": 0, "bottom": 0, "left": 0}
+        if source_width and source_height:
+            crop_pixels = {
+                "top": round(float(crop.get("top", 0)) * source_height),
+                "right": round(float(crop.get("right", 0)) * source_width),
+                "bottom": round(float(crop.get("bottom", 0)) * source_height),
+                "left": round(float(crop.get("left", 0)) * source_width),
+            }
+            crop_pixels["left"] = min(crop_pixels["left"], max(0, source_width - 2))
+            crop_pixels["right"] = min(
+                crop_pixels["right"], max(0, source_width - crop_pixels["left"] - 1)
+            )
+            crop_pixels["top"] = min(crop_pixels["top"], max(0, source_height - 2))
+            crop_pixels["bottom"] = min(
+                crop_pixels["bottom"], max(0, source_height - crop_pixels["top"] - 1)
+            )
+        if source_width and source_height and runtime.spec.aspect_mode == "cover":
+            available_width = source_width - crop_pixels["left"] - crop_pixels["right"]
+            available_height = source_height - crop_pixels["top"] - crop_pixels["bottom"]
+            if available_width * rect.height > available_height * rect.width:
+                excess = available_width - round(available_height * rect.width / rect.height)
+                crop_pixels["left"] += excess // 2
+                crop_pixels["right"] += excess - excess // 2
+            else:
+                excess = available_height - round(available_width * rect.height / rect.width)
+                crop_pixels["top"] += excess // 2
+                crop_pixels["bottom"] += excess - excess // 2
+        for property_name, value in crop_pixels.items():
+            runtime.cropper.set_property(property_name, value)
+
+        if runtime.spec.aspect_mode in {"cover", "stretch"}:
+            runtime.capsfilter.set_property(
+                "caps",
+                self.Gst.Caps.from_string(
+                    f"video/x-raw,width={rect.width},height={rect.height},pixel-aspect-ratio=1/1"
+                ),
+            )
+        else:
+            runtime.capsfilter.set_property("caps", None)
+
+    def remove_stream(self, slot_id: str) -> None:
+        self._call(self._remove_stream, slot_id)
+
+    def _remove_stream(self, slot_id: str) -> None:
+        runtime = self._slots.pop(slot_id, None)
+        self._health.pop(slot_id, None)
+        if runtime is None or self._pipeline is None or self._compositor is None:
+            return
+        self._remove_source_branch(runtime)
+        elements = [
+            runtime.placeholder_source,
+            runtime.placeholder_caps,
+            runtime.placeholder_text,
+            runtime.selector,
+            runtime.queue,
+            runtime.convert,
+            runtime.cropper,
+            runtime.scale,
+            runtime.capsfilter,
+            runtime.title_overlay,
+        ]
+        for element in [item for item in elements if item is not None]:
+            element.set_state(self.Gst.State.NULL)
+            self._pipeline.remove(element)
+        runtime.selector.release_request_pad(runtime.selector_placeholder_pad)
+        self._compositor.release_request_pad(runtime.compositor_pad)
+
+    def _remove_source_branch(self, runtime: _SlotRuntime) -> None:
+        if self._pipeline is None:
+            return
+        if runtime.reconnect_source_id:
+            self.GLib.source_remove(runtime.reconnect_source_id)
+            runtime.reconnect_source_id = None
+        if runtime.source_queue and runtime.frame_probe_id:
+            runtime.source_queue.get_static_pad("src").remove_probe(runtime.frame_probe_id)
+        for element in (runtime.source, runtime.source_queue):
+            if element:
+                element.set_state(self.Gst.State.NULL)
+                self._pipeline.remove(element)
+        if runtime.selector_camera_pad:
+            runtime.selector.release_request_pad(runtime.selector_camera_pad)
+        runtime.source = None
+        runtime.source_queue = None
+        runtime.selector_camera_pad = None
+        runtime.frame_probe_id = None
+
+    def replace_stream(self, slot_id: str, spec: StreamSpec) -> None:
+        self._call(self._replace_stream, slot_id, spec)
+
+    def _replace_stream(self, slot_id: str, spec: StreamSpec) -> None:
+        runtime = self._slots.get(slot_id)
+        if runtime is None:
+            self._add_stream(spec)
+            return
+        runtime.selector.set_property("active-pad", runtime.selector_placeholder_pad)
+        runtime.placeholder_text.set_property("text", f"{spec.camera_name}\nConnecting…")
+        previous_health = self._health[slot_id]
+        switched = runtime.spec.camera_id != spec.camera_id
+        self._remove_source_branch(runtime)
+        runtime.spec = spec
+        self._health[slot_id] = StreamHealth(
+            slot_id=slot_id, camera_id=spec.camera_id,
+            restart_count=previous_health.restart_count,
+            switch_count=previous_health.switch_count + int(switched),
+            last_restart_reason=previous_health.last_restart_reason,
+        )
+        self._apply_geometry(runtime)
+        self._apply_label(runtime)
+        self._create_source_branch(runtime)
+
+    def move_stream(self, slot_id: str, rect: Rect) -> None:
+        self._call(self._change_geometry, slot_id, rect)
+
+    def resize_stream(self, slot_id: str, rect: Rect) -> None:
+        self._call(self._change_geometry, slot_id, rect)
+
+    def _change_geometry(self, slot_id: str, rect: Rect) -> None:
+        runtime = self._require_slot(slot_id)
+        runtime.spec.rect = rect
+        self._apply_geometry(runtime)
+
+    def set_crop_mode(self, slot_id: str, aspect_mode: str, crop: dict[str, float] | None = None) -> None:
+        self._call(self._set_crop_mode, slot_id, aspect_mode, crop or {})
+
+    def _set_crop_mode(self, slot_id: str, aspect_mode: str, crop: dict[str, float]) -> None:
+        runtime = self._require_slot(slot_id)
+        runtime.spec.aspect_mode = aspect_mode
+        runtime.spec.crop = crop
+        self._apply_geometry(runtime)
+
+    def set_visibility(self, slot_id: str, visible: bool) -> None:
+        self._call(self._set_visibility, slot_id, visible)
+
+    def _set_visibility(self, slot_id: str, visible: bool) -> None:
+        runtime = self._require_slot(slot_id)
+        if runtime.compositor_pad.find_property("alpha"):
+            runtime.compositor_pad.set_property("alpha", runtime.spec.opacity if visible else 0.0)
+
+    def set_opacity(self, slot_id: str, opacity: float) -> None:
+        self._call(self._set_opacity, slot_id, opacity)
+
+    def _set_opacity(self, slot_id: str, opacity: float) -> None:
+        runtime = self._require_slot(slot_id)
+        runtime.spec.opacity = max(0.0, min(1.0, opacity))
+        if runtime.compositor_pad.find_property("alpha"):
+            runtime.compositor_pad.set_property("alpha", runtime.spec.opacity)
+
+    def set_label(self, slot_id: str, label: str | None, title_position: str) -> None:
+        self._call(self._set_label, slot_id, label, title_position)
+
+    def _set_label(self, slot_id: str, label: str | None, title_position: str) -> None:
+        runtime = self._require_slot(slot_id)
+        runtime.spec.label = label
+        runtime.spec.title_position = title_position
+        self._apply_label(runtime)
+
+    def _apply_label(self, runtime: _SlotRuntime) -> None:
+        position = runtime.spec.title_position
+        text = runtime.spec.label or ""
+        if position == "none":
+            text = ""
+        alignments = {
+            "top-left": ("top", "left"),
+            "top-right": ("top", "right"),
+            "bottom-left": ("bottom", "left"),
+            "bottom-right": ("bottom", "right"),
+        }
+        vertical, horizontal = alignments.get(position, ("bottom", "left"))
+        runtime.title_overlay.set_property("text", text)
+        runtime.title_overlay.set_property("valignment", vertical)
+        runtime.title_overlay.set_property("halignment", horizontal)
+        if runtime.title_overlay.find_property("silent"):
+            runtime.title_overlay.set_property("silent", not bool(text))
+
+    def set_z_order(self, slot_id: str, z_index: int) -> None:
+        self._call(self._set_z_order, slot_id, z_index)
+
+    def _set_z_order(self, slot_id: str, z_index: int) -> None:
+        runtime = self._require_slot(slot_id)
+        runtime.spec.z_index = z_index
+        if runtime.compositor_pad.find_property("zorder"):
+            runtime.compositor_pad.set_property("zorder", z_index)
+
+    def snapshot(self, slot_id: str | None = None) -> bytes | None:
+        return None
+
+    def health(self) -> dict[str, Any]:
+        return self._call(self._health_snapshot)
+
+    def _health_snapshot(self) -> dict[str, Any]:
+        return {
+            "backend": "gstreamer",
+            "state": "RUNNING" if self._pipeline is not None else "STOPPED",
+            "sink": self._sink.get_factory().get_name() if self._sink else None,
+            "output": {"width": self._output_width, "height": self._output_height},
+            "uptime_seconds": time.monotonic() - self._started_at if self._started_at else 0,
+            "streams": {key: value.to_dict() for key, value in self._health.items()},
+        }
+
+    def restart_stream(self, slot_id: str) -> None:
+        self._call(self._restart_stream, slot_id)
+
+    def _restart_stream(self, slot_id: str) -> None:
+        runtime = self._require_slot(slot_id)
+        health = self._health[slot_id]
+        health.restart_count += 1
+        health.last_restart_reason = "Player recovery or manual restart"
+        health.state = HealthState.reconnecting
+        runtime.selector.set_property("active-pad", runtime.selector_placeholder_pad)
+        runtime.placeholder_text.set_property("text", f"{runtime.spec.camera_name}\nReconnecting…")
+        self._remove_source_branch(runtime)
+        self._create_source_branch(runtime)
+
+    def _require_slot(self, slot_id: str) -> _SlotRuntime:
+        runtime = self._slots.get(slot_id)
+        if runtime is None:
+            raise KeyError(f"Renderer slot {slot_id} not found")
+        return runtime
+
+    def _watchdog_tick(self) -> bool:
+        now = time.monotonic()
+        for slot_id, health in list(self._health.items()):
+            if health.state == HealthState.live and health.last_frame_monotonic:
+                if now - health.last_frame_monotonic > 8:
+                    health.state = HealthState.stalled
+                    health.detail = "No video frames received for 8 seconds"
+                    self._mark_offline(slot_id, health.detail)
+                    self._schedule_reconnect(slot_id)
+        return True
+
+    def _mark_offline(self, slot_id: str, detail: str) -> None:
+        runtime = self._slots.get(slot_id)
+        health = self._health.get(slot_id)
+        if not runtime or not health:
+            return
+        health.state = HealthState.offline
+        health.detail = detail
+        runtime.placeholder_text.set_property("text", f"{runtime.spec.camera_name}\nStream unavailable\nReconnecting…")
+        runtime.selector.set_property("active-pad", runtime.selector_placeholder_pad)
+
+    def _schedule_reconnect(self, slot_id: str) -> None:
+        runtime = self._slots.get(slot_id)
+        health = self._health.get(slot_id)
+        if not runtime or not health or runtime.reconnect_source_id:
+            return
+        delay = max(1, min(60, round(health.reconnect_backoff_seconds)))
+        health.reconnect_backoff_seconds = min(60.0, health.reconnect_backoff_seconds * 2)
+
+        def reconnect() -> bool:
+            runtime.reconnect_source_id = None
+            try:
+                self._restart_stream(slot_id)
+            except Exception:
+                LOGGER.exception("Per-stream reconnect failed", extra={"slot_id": slot_id})
+                self._schedule_reconnect(slot_id)
+            return False
+
+        runtime.reconnect_source_id = self.GLib.timeout_add_seconds(delay, reconnect)
+
+    def _on_bus_message(self, _: Any, message: Any) -> None:
+        if message.type == self.Gst.MessageType.ERROR:
+            error, debug = message.parse_error()
+            slot_id = self._slot_for_element(message.src)
+            if slot_id:
+                LOGGER.warning(
+                    "GStreamer stream error for slot %s: %s",
+                    slot_id,
+                    error.message,
+                    extra={"slot_id": slot_id},
+                )
+                self._mark_offline(slot_id, error.message)
+                self._schedule_reconnect(slot_id)
+            else:
+                LOGGER.error("GStreamer pipeline error: %s (%s)", error.message, debug or "")
+        elif message.type == self.Gst.MessageType.WARNING:
+            warning, _ = message.parse_warning()
+            slot_id = self._slot_for_element(message.src)
+            if slot_id and slot_id in self._health:
+                self._health[slot_id].state = HealthState.degraded
+                self._health[slot_id].detail = warning.message
+        elif message.type == self.Gst.MessageType.EOS:
+            slot_id = self._slot_for_element(message.src)
+            if slot_id:
+                self._mark_offline(slot_id, "End of stream")
+                self._schedule_reconnect(slot_id)
+
+    def _slot_for_element(self, element: Any) -> str | None:
+        current = element
+        names: list[str] = []
+        while current is not None:
+            try:
+                names.append(current.get_name())
+                current = current.get_parent()
+            except Exception:
+                break
+        joined = " ".join(names)
+        for slot_id in self._slots:
+            if slot_id in joined:
+                return slot_id
+        return None
+
+    def shutdown(self) -> None:
+        if self._loop is None:
+            return
+        try:
+            self._call(self._shutdown)
+        finally:
+            if self._thread:
+                self._thread.join(timeout=10)
+            self._thread = None
+            self._loop = None
+
+    def _shutdown(self) -> None:
+        if self._watchdog_source_id:
+            self.GLib.source_remove(self._watchdog_source_id)
+            self._watchdog_source_id = None
+        for slot_id in list(self._slots):
+            self._remove_stream(slot_id)
+        if self._pipeline:
+            self._pipeline.set_state(self.Gst.State.NULL)
+            self._pipeline = None
+            self._compositor = None
+            self._sink = None
+            self._output_scale = None
+            self._output_caps = None
+        if self._loop:
+            self._loop.quit()

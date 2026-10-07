@@ -1,0 +1,7 @@
+recursive-include src/mosaivue/static *
+recursive-include systemd *
+recursive-include migrations *
+recursive-include installer *
+recursive-include docs *.md *.json *.png
+include LICENSE NOTICE THIRD_PARTY_NOTICES.md README.md CHANGELOG.md
+include install.sh uninstall.sh alembic.ini

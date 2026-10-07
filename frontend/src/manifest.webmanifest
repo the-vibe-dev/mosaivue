@@ -1,0 +1,12 @@
+{
+  "name": "Mosaivue",
+  "short_name": "Mosaivue",
+  "description": "Local-first RTSP camera wall appliance",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#ffffff",
+  "icons": [
+    { "src": "/brand/mosaivue-icon.png", "sizes": "157x160", "type": "image/png", "purpose": "any" }
+  ]
+}

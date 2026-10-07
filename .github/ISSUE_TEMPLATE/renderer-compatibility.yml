@@ -1,0 +1,20 @@
+name: Renderer compatibility
+description: Report output sink, DRM, decoder, or compositor behavior
+title: "[renderer] "
+labels: [renderer]
+body:
+  - type: input
+    id: platform
+    attributes: {label: Board/GPU, OS, kernel, and display}
+    validations: {required: true}
+  - type: input
+    id: backend
+    attributes: {label: Backend, sink, output mode, and GStreamer version}
+    validations: {required: true}
+  - type: textarea
+    id: doctor
+    attributes: {label: Relevant sanitized mosaivue doctor output}
+  - type: textarea
+    id: issue
+    attributes: {label: Exact reproduction and evidence}
+    validations: {required: true}

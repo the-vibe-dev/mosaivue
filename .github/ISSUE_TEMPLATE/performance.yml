@@ -1,0 +1,21 @@
+name: Performance report
+description: Share a reproducible stream-count/latency benchmark
+title: "[performance] "
+labels: [performance]
+body:
+  - type: input
+    id: platform
+    attributes: {label: Hardware, RAM, OS, kernel, cooling}
+    validations: {required: true}
+  - type: input
+    id: output
+    attributes: {label: Output resolution, refresh, backend, and sink}
+    validations: {required: true}
+  - type: textarea
+    id: sources
+    attributes: {label: Stream count, codec, resolution, FPS, bitrate, transport}
+    validations: {required: true}
+  - type: textarea
+    id: results
+    attributes: {label: CPU, memory, temperature, FPS, drops, first-frame and switch latency}
+    validations: {required: true}

@@ -1,0 +1,656 @@
+{
+  "SPDXID": "SPDXRef-DOCUMENT",
+  "annotations": [
+    {
+      "annotationDate": "1970-01-01T00:00:00Z",
+      "annotationType": "OTHER",
+      "annotator": "Tool: mosaivue-license-inventory",
+      "comment": "Generated from pyproject runtime requirements and installed distribution metadata. Review operating-system GStreamer/FFmpeg components and frontend build tools separately."
+    }
+  ],
+  "creationInfo": {
+    "creators": [
+      "Tool: mosaivue-license-inventory"
+    ],
+    "licenseListVersion": "3.25"
+  },
+  "dataLicense": "CC0-1.0",
+  "documentNamespace": "https://github.com/the-vibe-dev/mosaivue/spdx/0.1.0b1",
+  "missingFromBuildEnvironment": [
+    "textual"
+  ],
+  "name": "Mosaivue Python runtime dependency inventory",
+  "packages": [
+    {
+      "SPDXID": "SPDXRef-Package-Mosaivue",
+      "copyrightText": "See NOTICE",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "name": "mosaivue",
+      "versionInfo": "0.1.0b1"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-alembic",
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "homepage": "Homepage, https://alembic.sqlalchemy.org",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "alembic",
+      "versionInfo": "1.18.4"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-annotated-doc",
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "homepage": "Homepage, https://github.com/fastapi/annotated-doc",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "annotated-doc",
+      "versionInfo": "0.0.4"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-annotated-types",
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "homepage": "Homepage, https://github.com/annotated-types/annotated-types",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT License",
+      "name": "annotated-types",
+      "versionInfo": "0.7.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-anyio",
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "homepage": "Documentation, https://anyio.readthedocs.io/en/latest/",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "anyio",
+      "versionInfo": "4.13.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-certifi",
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "homepage": "https://github.com/certifi/python-certifi",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MPL-2.0",
+      "name": "certifi",
+      "versionInfo": "2026.5.20"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-cffi",
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "homepage": "Documentation, https://cffi.readthedocs.io/",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "cffi",
+      "versionInfo": "2.0.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-click",
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "homepage": "Changes, https://click.palletsprojects.com/changes/",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "BSD License",
+      "name": "click",
+      "versionInfo": "8.1.8"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-cryptography",
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "homepage": "homepage, https://github.com/pyca/cryptography",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "Apache-2.0 OR BSD-3-Clause",
+      "name": "cryptography",
+      "versionInfo": "46.0.4"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-fastapi",
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "homepage": "Homepage, https://github.com/fastapi/fastapi",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "fastapi",
+      "versionInfo": "0.128.2"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-greenlet",
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "homepage": "Homepage, https://greenlet.readthedocs.io",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT AND PSF-2.0",
+      "name": "greenlet",
+      "versionInfo": "3.5.1"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-h11",
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "homepage": "https://github.com/python-hyper/h11",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "h11",
+      "versionInfo": "0.16.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-httpcore",
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "homepage": "Documentation, https://www.encode.io/httpcore",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "BSD-3-Clause",
+      "name": "httpcore",
+      "versionInfo": "1.0.9"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-httpx",
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "homepage": "Changelog, https://github.com/encode/httpx/blob/master/CHANGELOG.md",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "BSD-3-Clause",
+      "name": "httpx",
+      "versionInfo": "0.28.1"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-idna",
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "homepage": "Changelog, https://github.com/kjd/idna/blob/master/HISTORY.md",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "BSD-3-Clause",
+      "name": "idna",
+      "versionInfo": "3.17"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-Mako",
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "homepage": "https://www.makotemplates.org/",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "Mako",
+      "versionInfo": "1.3.12"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-markdown-it-py",
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "homepage": "Documentation, https://markdown-it-py.readthedocs.io",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT License",
+      "name": "markdown-it-py",
+      "versionInfo": "4.2.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-MarkupSafe",
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "homepage": "Donate, https://palletsprojects.com/donate",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "BSD-3-Clause",
+      "name": "MarkupSafe",
+      "versionInfo": "3.0.3"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-mdurl",
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "homepage": "Homepage, https://github.com/executablebooks/mdurl",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT License",
+      "name": "mdurl",
+      "versionInfo": "0.1.2"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-psutil",
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "homepage": "https://github.com/giampaolo/psutil",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "BSD-3-Clause",
+      "name": "psutil",
+      "versionInfo": "7.2.2"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-pycparser",
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "homepage": "Homepage, https://github.com/eliben/pycparser",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "BSD-3-Clause",
+      "name": "pycparser",
+      "versionInfo": "3.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-pydantic",
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "homepage": "Homepage, https://github.com/pydantic/pydantic",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "pydantic",
+      "versionInfo": "2.13.4"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-pydantic-core",
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "homepage": "https://github.com/pydantic/pydantic",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "pydantic_core",
+      "versionInfo": "2.46.4"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-Pygments",
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "homepage": "Homepage, https://pygments.org",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "BSD-2-Clause",
+      "name": "Pygments",
+      "versionInfo": "2.20.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-python-multipart",
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "homepage": "Homepage, https://github.com/Kludex/python-multipart",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "Apache-2.0",
+      "name": "python-multipart",
+      "versionInfo": "0.0.29"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-PyYAML",
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "homepage": "https://pyyaml.org/",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "PyYAML",
+      "versionInfo": "6.0.3"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-rich",
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "homepage": "Documentation, https://rich.readthedocs.io/en/latest/",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "rich",
+      "versionInfo": "15.0.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-shellingham",
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "homepage": "https://github.com/sarugaku/shellingham",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "ISC License",
+      "name": "shellingham",
+      "versionInfo": "1.5.4"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-SQLAlchemy",
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "homepage": "https://www.sqlalchemy.org",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "SQLAlchemy",
+      "versionInfo": "2.0.50"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-starlette",
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "homepage": "Homepage, https://github.com/Kludex/starlette",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "BSD-3-Clause",
+      "name": "starlette",
+      "versionInfo": "0.50.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-textual",
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "name": "textual",
+      "versionInfo": "NOT-IN-BUILD-ENVIRONMENT"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-typer",
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "homepage": "Homepage, https://github.com/fastapi/typer",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "typer",
+      "versionInfo": "0.26.3"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-typing-inspection",
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "homepage": "Homepage, https://github.com/pydantic/typing-inspection",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "typing-inspection",
+      "versionInfo": "0.4.2"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-typing-extensions",
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "homepage": "Bug Tracker, https://github.com/python/typing_extensions/issues",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "PSF-2.0",
+      "name": "typing_extensions",
+      "versionInfo": "4.16.0"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-uvicorn",
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "homepage": "Changelog, https://uvicorn.dev/release-notes",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "BSD-3-Clause",
+      "name": "uvicorn",
+      "versionInfo": "0.48.0"
+    }
+  ],
+  "relationships": [
+    {
+      "relatedSpdxElement": "SPDXRef-Package-Mosaivue",
+      "relationshipType": "DESCRIBES",
+      "spdxElementId": "SPDXRef-DOCUMENT"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-PyYAML",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-Mosaivue"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-alembic",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-Mosaivue"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-cryptography",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-Mosaivue"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-fastapi",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-Mosaivue"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-httpx",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-Mosaivue"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-psutil",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-Mosaivue"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-pydantic",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-Mosaivue"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-python-multipart",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-Mosaivue"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-rich",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-Mosaivue"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-sqlalchemy",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-Mosaivue"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-textual",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-Mosaivue"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-typer",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-Mosaivue"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-uvicorn",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-Mosaivue"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-MarkupSafe",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-Mako"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-greenlet",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-SQLAlchemy"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-typing-extensions",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-SQLAlchemy"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-Mako",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-alembic"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-SQLAlchemy",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-alembic"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-typing-extensions",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-alembic"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-idna",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-anyio"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-pycparser",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-cffi"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-cffi",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-cryptography"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-annotated-doc",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-fastapi"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-pydantic",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-fastapi"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-starlette",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-fastapi"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-typing-extensions",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-fastapi"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-typing-inspection",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-fastapi"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-certifi",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-httpcore"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-h11",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-httpcore"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-anyio",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-httpx"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-certifi",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-httpx"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-httpcore",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-httpx"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-idna",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-httpx"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-mdurl",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-markdown-it-py"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-annotated-types",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-pydantic"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-pydantic-core",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-pydantic"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-typing-extensions",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-pydantic"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-typing-inspection",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-pydantic"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-typing-extensions",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-pydantic-core"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-markdown-it-py",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-rich"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-pygments",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-rich"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-anyio",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-starlette"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-annotated-doc",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-typer"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-rich",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-typer"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-shellingham",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-typer"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-typing-extensions",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-typing-inspection"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-click",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-uvicorn"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-h11",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-uvicorn"
+    }
+  ],
+  "spdxVersion": "SPDX-2.3"
+}

@@ -1,0 +1,26 @@
+name: Raspberry Pi hardware qualification
+on:
+  workflow_dispatch:
+    inputs:
+      streams:
+        description: Synthetic stream count
+        default: '6'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  pi:
+    runs-on: [self-hosted, linux, arm64, mosaivue-hardware]
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m venv --system-site-packages .venv
+      - run: .venv/bin/pip install -e '.[dev]'
+      - run: .venv/bin/pytest tests/unit tests/renderer
+      - run: .venv/bin/mosaivue doctor --json > hardware-doctor.json
+      - run: .venv/bin/mosaivue benchmark --streams '${{ inputs.streams }}' --duration 30 --json > hardware-benchmark.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hardware-results
+          path: hardware-*.json

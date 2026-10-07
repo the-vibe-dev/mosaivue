@@ -1,0 +1,32 @@
+name: Bug report
+description: Report reproducible Mosaivue behavior that is not renderer/hardware-specific
+title: "[bug] "
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes: {label: Mosaivue version}
+    validations: {required: true}
+  - type: input
+    id: platform
+    attributes: {label: Hardware, OS, and kernel}
+    validations: {required: true}
+  - type: textarea
+    id: steps
+    attributes: {label: Reproduction steps}
+    validations: {required: true}
+  - type: textarea
+    id: expected
+    attributes: {label: Expected behavior}
+    validations: {required: true}
+  - type: textarea
+    id: actual
+    attributes: {label: Actual behavior and sanitized evidence}
+    validations: {required: true}
+  - type: checkboxes
+    id: secrets
+    attributes:
+      label: Secret check
+      options:
+        - label: I removed RTSP passwords, cookies, master keys, and unredacted URLs.
+          required: true

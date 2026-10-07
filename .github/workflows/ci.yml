@@ -1,0 +1,65 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        python-version: ['3.11', '3.12', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - run: sudo apt-get update && sudo apt-get install -y python3-gi gir1.2-gstreamer-1.0 gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good
+      - run: pip install -e '.[dev]'
+      - run: python -m compileall -q src
+      - run: pytest --cov=mosaivue --cov-report=xml
+
+  frontend:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - working-directory: frontend
+        run: npm ci
+      - working-directory: frontend
+        run: npm run typecheck
+      - working-directory: frontend
+        run: npm run build
+      - working-directory: frontend
+        run: npm test
+      - run: rm -rf src/mosaivue/static && cp -a frontend/dist src/mosaivue/static
+      - run: python scripts/check_release.py --frontend-only
+
+  release-check:
+    runs-on: ubuntu-24.04
+    needs: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: pip install -e '.[dev]'
+      - working-directory: frontend
+        run: npm ci && npm run build
+      - run: rm -rf src/mosaivue/static && cp -a frontend/dist src/mosaivue/static
+      - run: python scripts/check_release.py
+      - run: packaging/build-release.sh dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mosaivue-source-release
+          path: dist/*

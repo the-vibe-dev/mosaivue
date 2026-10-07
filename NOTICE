@@ -1,0 +1,13 @@
+Mosaivue
+Copyright 2026 Mosaivue contributors
+
+This product is licensed under the Apache License, Version 2.0.
+
+Mosaivue was designed as a modern successor to the behavior and use case of the
+Apache-2.0-licensed Anonymousdog/displaycameras project. This repository does
+not include copied displaycameras source code or OMXPlayer source code.
+
+If future contributions reuse source from displaycameras, preserve the original
+copyright and notice statements in the affected files and update this NOTICE.
+Any future OMXPlayer-derived component must remain outside the Apache-2.0 core
+and carry the applicable GPL license and source obligations.

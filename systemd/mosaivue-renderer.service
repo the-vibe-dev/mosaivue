@@ -1,0 +1,50 @@
+[Unit]
+Description=Mosaivue display renderer
+Documentation=file:/opt/mosaivue/current/docs/renderer.md
+After=network-online.target systemd-udev-settle.service
+Wants=network-online.target
+Before=mosaivue-server.service
+
+[Service]
+Type=simple
+User=mosaivue
+Group=mosaivue
+SupplementaryGroups=video render
+Environment=PYTHONUNBUFFERED=1
+Environment=MOSAIVUE_CONFIG=/etc/mosaivue/config.json
+Environment=MOSAIVUE_DATA_DIR=/var/lib/mosaivue
+Environment=MOSAIVUE_CONFIG_DIR=/etc/mosaivue
+Environment=MOSAIVUE_CACHE_DIR=/var/cache/mosaivue
+Environment=MOSAIVUE_LOG_DIR=/var/log/mosaivue
+Environment=MOSAIVUE_RUN_DIR=/run/mosaivue
+Environment=GST_DEBUG_NO_COLOR=1
+RuntimeDirectory=mosaivue
+RuntimeDirectoryMode=0750
+ExecStart=/opt/mosaivue/current/.venv/bin/mosaivue-renderer
+Restart=always
+RestartSec=2
+TimeoutStartSec=45
+TimeoutStopSec=15
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=false
+LockPersonality=true
+MemoryDenyWriteExecute=false
+DevicePolicy=closed
+DeviceAllow=char-drm rw
+DeviceAllow=char-video4linux rw
+DeviceAllow=/dev/fb0 rw
+DeviceAllow=/dev/vchiq rw
+DeviceAllow=/dev/vcio rw
+DeviceAllow=/dev/vcsm-cma rw
+ReadWritePaths=/var/lib/mosaivue /var/cache/mosaivue /var/log/mosaivue /run/mosaivue
+
+[Install]
+WantedBy=multi-user.target

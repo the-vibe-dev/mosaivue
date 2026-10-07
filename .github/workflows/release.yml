@@ -1,0 +1,36 @@
+name: Release artifacts
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  source:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check tag matches package version
+        run: |
+          version="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          test "$GITHUB_REF_NAME" = "v$version"
+      - run: pip install -e '.[dev]'
+      - working-directory: frontend
+        run: npm ci && npm run build && npm test
+      - run: rm -rf src/mosaivue/static && cp -a frontend/dist src/mosaivue/static
+      - run: pytest
+      - run: python scripts/check_release.py
+      - run: packaging/build-release.sh dist
+      - run: packaging/build-deb.sh dist
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, 'b') || contains(github.ref_name, 'rc') }}

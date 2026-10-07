@@ -1,0 +1,72 @@
+name: Browser E2E
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  browser:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: pip install -e '.[dev]'
+      - run: playwright install --with-deps chromium
+      - working-directory: frontend
+        run: npm ci && npm run build
+      - run: rm -rf src/mosaivue/static && cp -a frontend/dist src/mosaivue/static
+      - name: Prepare isolated appliance
+        run: |
+          root=/tmp/mosaivue-e2e
+          mkdir -p "$root"/{data,etc,cache,log,run}
+          cat >"$root/etc/config.json" <<'JSON'
+          {
+            "bind": "127.0.0.1",
+            "port": 8765,
+            "renderer_backend": "test",
+            "allow_test_backend": true,
+            "web_preview_enabled": false,
+            "update_checks_enabled": false,
+            "log_level": "WARNING"
+          }
+          JSON
+          {
+            echo "MOSAIVUE_DATA_DIR=$root/data"
+            echo "MOSAIVUE_CONFIG_DIR=$root/etc"
+            echo "MOSAIVUE_CACHE_DIR=$root/cache"
+            echo "MOSAIVUE_LOG_DIR=$root/log"
+            echo "MOSAIVUE_RUN_DIR=$root/run"
+            echo "MOSAIVUE_DB_PATH=$root/data/mosaivue.db"
+            echo "MOSAIVUE_MASTER_KEY_PATH=$root/etc/master.key"
+            echo "MOSAIVUE_SETUP_TOKEN_PATH=$root/etc/setup-token"
+            echo "MOSAIVUE_CAPABILITIES_PATH=$root/data/capabilities.json"
+            echo "MOSAIVUE_RENDERER_SOCKET=$root/run/renderer.sock"
+            echo "MOSAIVUE_CONFIG=$root/etc/config.json"
+            echo "MOSAIVUE_E2E_URL=http://127.0.0.1:8765"
+            echo "MOSAIVUE_E2E_USER=demo"
+            echo "MOSAIVUE_E2E_PASSWORD=Mosaivue Demo Password 2026!"
+          } >> "$GITHUB_ENV"
+      - name: Start and seed Mosaivue
+        run: |
+          mosaivue serve >/tmp/mosaivue-e2e/server.log 2>&1 &
+          echo $! >/tmp/mosaivue-e2e/server.pid
+          for i in {1..100}; do
+            curl -fsS http://127.0.0.1:8765/healthz >/dev/null && break
+            sleep .1
+          done
+          token="$(cat "$MOSAIVUE_SETUP_TOKEN_PATH")"
+          curl -fsS -H 'Content-Type: application/json' \
+            -d "{\"setup_token\":\"$token\",\"username\":\"$MOSAIVUE_E2E_USER\",\"password\":\"$MOSAIVUE_E2E_PASSWORD\"}" \
+            http://127.0.0.1:8765/api/v1/auth/setup >/dev/null
+          python scripts/seed_demo.py
+      - run: pytest -q tests/e2e
+      - if: always()
+        run: cat /tmp/mosaivue-e2e/server.log || true

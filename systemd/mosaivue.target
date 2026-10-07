@@ -1,0 +1,7 @@
+[Unit]
+Description=Mosaivue camera-monitor appliance
+Wants=mosaivue-renderer.service mosaivue-server.service
+After=network-online.target
+
+[Install]
+WantedBy=multi-user.target

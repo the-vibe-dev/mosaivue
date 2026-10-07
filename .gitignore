@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+coverage.xml
+.mypy_cache/
+.ruff_cache/
+.venv/
+
+# Frontend
+frontend/node_modules/
+frontend/.vite/
+
+# Build and release
+dist/
+build/
+*.egg-info/
+*.deb
+*.tar.gz
+*.zip
+
+# Local runtime data
+.mosaivue-dev/
+mosaivue.db
+*.sqlite
+*.sqlite3
+*.cwbackup
+mosaivue-support*.zip
+.pi
+.env
+.env.*
+*.pem
+*.key
+rollout/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
