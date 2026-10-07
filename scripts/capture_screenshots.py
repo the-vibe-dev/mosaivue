@@ -43,8 +43,11 @@ def main() -> None:
 
         page.goto(f"{args.base_url.rstrip('/')}/layouts", wait_until="domcontentloaded")
         page.wait_for_selector(".layout-row")
-        page.locator('a[href$="/edit"]').first.click()
+        active_edit = page.locator('.layout-row.is-active a[href$="/edit"]')
+        (active_edit if active_edit.count() else page.locator('a[href$="/edit"]')).first.click()
         page.wait_for_selector(".layout-canvas")
+        if page.locator(".canvas-slot").count():
+            page.locator(".canvas-slot").first.click()
         page.screenshot(path=output / "layout-editor.png", full_page=True)
 
         mobile = browser.new_page(viewport={"width": 390, "height": 844})
