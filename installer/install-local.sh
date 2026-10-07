@@ -212,7 +212,10 @@ if ! "$PREFIX/current/.venv/bin/mosaivue" doctor --json >/var/lib/mosaivue/insta
 fi
 
 if [[ "$NO_START" -eq 0 ]]; then
-  systemctl enable --now mosaivue-renderer.service mosaivue-server.service
+  systemctl enable mosaivue-renderer.service mosaivue-server.service
+  # enable --now leaves active units running their old Python environment.
+  # Restart after switching current so an update activates the new release.
+  systemctl restart mosaivue-renderer.service mosaivue-server.service
   HEALTH_HOST="$(jq -r '.bind' /etc/mosaivue/config.json)"
   [[ "$HEALTH_HOST" == 0.0.0.0 || "$HEALTH_HOST" == :: ]] && HEALTH_HOST=127.0.0.1
   [[ "$HEALTH_HOST" == *:* ]] && HEALTH_HOST="[$HEALTH_HOST]"
