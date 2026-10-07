@@ -8,7 +8,7 @@ Verification performed on 2026-10-07 (America/New_York) for the Mosaivue private
 - Frontend TypeScript type check, production build, and Node test suite: **passed** (3 Node tests).
 - Python bytecode compilation, shell syntax checks, and `scripts/check_release.py`: **passed**.
 - Generated OpenAPI snapshot: **51 paths**, version **0.1.0b1**.
-- Source archive `mosaivue-0.1.0b1-source.tar.gz` built from the staged Git file set; its SHA-256 sidecar verified.
+- Source archive `mosaivue-0.1.0b1-source.tar.gz` built from the staged Git file set; its SHA-256 sidecar verified (`6ebdc9e7ad4f60cf84e9d8b9455d795eabda8083c2919fb55e002d5051ca4a6f`).
 - The Pi installer built and installed a Mosaivue wheel with Python 3.11 on 32-bit Bullseye. A pinned SQLAlchemy wheel and target-built cffi avoided binary incompatibilities.
 - Gitleaks directory scan: **no findings**.
 - Authenticated Chromium checks on the Pi loaded the supplied logo, the OMX-specific display message, rotation cards without a transition setting, and the corrected security audit, with no page errors.
@@ -22,4 +22,4 @@ Physical DRM/KMS output and hardware decoding through GStreamer on Pi 4, Pi 5, a
 
 ## GitHub Actions status
 
-The fresh Mosaivue repository is staged privately first. Its CI must pass before a public beta tag or release is published.
+The fresh Mosaivue repository is staged privately at `the-vibe-dev/mosaivue`. Its first CI run failed before any runner was assigned: backend and frontend jobs have zero steps and no logs. Recent runs in the previous repository have the same signature. This is an Actions runner/account issue to resolve before a public beta tag or release is published; it is not a passing CI result.
