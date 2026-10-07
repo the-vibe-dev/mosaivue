@@ -16,7 +16,7 @@ Verification performed on 2026-10-07 (America/New_York) for the Mosaivue private
 
 ## Hardware evidence and remaining qualification
 
-One Raspberry Pi 3B+ running 32-bit Bullseye is running Mosaivue with seven live camera tiles through OMXPlayer at 1920×1080. After restarting into the final runtime, the rotating tile completed seven observed cuts with zero recovery restarts; each logged a preconnected cut of 250–325 ms and no rotation errors. The migrated key, config, and database have expected owner and mode checks; the audit passes with a LAN HTTP advisory. The previous services and the previous Mosaivue release remain installed, and rollback was exercised during migration. Physical-display cut continuity awaits viewer confirmation.
+One Raspberry Pi 3B+ running 32-bit Bullseye is running Mosaivue with seven live camera tiles through OMXPlayer at 1920×1080. After restarting into the final runtime, the rotating tile completed 21 observed cuts with zero recovery restarts; sampled cuts were preconnected and took 250–325 ms, with no rotation errors. The migrated key, config, and database have expected owner and mode checks; the audit passes with a LAN HTTP advisory. The previous services and the previous Mosaivue release remain installed, and rollback was exercised during migration. Physical-display cut continuity awaits viewer confirmation.
 
 Physical DRM/KMS output and hardware decoding through GStreamer on Pi 4, Pi 5, and ROCK Pi 4+ remain unqualified. Run the [hardware test plan](docs/hardware-test-plan.md) before making device-specific capacity claims.
 

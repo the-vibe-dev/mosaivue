@@ -75,6 +75,20 @@ The helper creates a backup, stages a versioned release, runs the installer, cha
 sudo /opt/mosaivue/current/installer/update.sh --archive ./mosaivue-0.2.0-source.tar.gz
 ```
 
+## Rollback
+
+The update prints the retained previous release path and saves a pre-update backup under `/var/lib/mosaivue/`. To return to a previous release with a compatible database schema, substitute that printed path:
+
+```bash
+PREVIOUS_RELEASE=/opt/mosaivue/releases/0.1.0b1
+sudo ln -sfn "$PREVIOUS_RELEASE" /opt/mosaivue/current.rollback
+sudo mv -Tf /opt/mosaivue/current.rollback /opt/mosaivue/current
+sudo systemctl restart mosaivue-renderer.service mosaivue-server.service
+curl -fsS --retry 60 --retry-delay 2 --retry-connrefused http://127.0.0.1:8080/healthz
+```
+
+Keep the pre-update backup if a future release changes the database schema.
+
 ## Uninstall
 
 ```bash
