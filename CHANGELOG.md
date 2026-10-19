@@ -8,7 +8,9 @@ All notable changes follow a Keep a Changelog-style format. Version numbers use 
 
 - GStreamer rotation preconnects a sequential or reverse camera and switches only after decoded video arrives. A two-camera group keeps both source branches running between cuts, avoiding decoder teardown and a black tile on the tested ROCK Pi 4B+.
 - An active GStreamer rotation source error now requests a switch to its warm alternate through the rotation controller. The bus callback keeps the renderer loop responsive instead of stopping an RTSP decoder there.
-- Failed prepared and fixed GStreamer sources reset on a GStreamer worker thread, so a blocked RTSP shutdown cannot stall the shared video loop. A stale prepared source is retried before the next rotation cut.
+- Failed prepared and fixed GStreamer sources reset on a GStreamer worker thread, so a blocked RTSP shutdown cannot stall the shared video loop. If that reset does not produce frames, a fresh source branch is opened without waiting for the failed branch to stop.
+- If both rotation feeds remain without frames after recovery, the renderer process exits for its systemd restart instead of leaving a frozen tile marked LIVE.
+- If only the standby feed remains unavailable after two fresh connection attempts, the renderer recycles once and then keeps the working feed visible for at least five minutes before another full restart.
 - The Rock Pi camera profiles that needed more RTSP jitter tolerance can use the `stable` latency preset.
 
 ## [0.1.0b1] - 2026-10-07

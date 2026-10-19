@@ -96,6 +96,19 @@ Failed prepared and fixed sources reset on a GStreamer worker thread. Their
 existing selector branches remain in the pipeline while RTSP reconnects, so
 the other tiles continue to render. A rotation candidate is never selected
 until it has produced a recent decoded frame.
+If a source reset blocks or remains without frames, the renderer opens a new
+source branch and ignores late messages from the retired branch. The number
+of retired branches is bounded so repeated failures cannot grow the pipeline
+without limit.
+After two unsuccessful standby branch replacements, the renderer restarts once
+to clear the decoder pipeline. A five-minute cooldown prevents an offline
+standby camera from repeatedly restarting the whole wall; the working camera
+stays visible during that cooldown.
+If both rotation sources stop producing frames, the slot reports STALLED. The
+renderer gives the prepared source fifteen seconds to recover, then exits so
+systemd can restart the pipeline. This fallback briefly interrupts the wall
+but prevents an indefinitely frozen rotation tile. The same five-minute
+cooldown applies if both feeds remain offline after that restart.
 On ROCK Pi, `scripts/rockpi-smoke.py --streams 2 --seconds 15 --sink fakesink --recovery`
 exercises both recovery paths with local test streams while the normal HDMI
 wall stays running.

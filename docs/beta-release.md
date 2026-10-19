@@ -15,7 +15,7 @@ This document records what is ready to stage privately and what remains unqualif
 ## Limits to state in a public beta
 
 - Physical output and hardware decoder performance on Raspberry Pi 4 and Pi 5 remain unqualified.
-- ROCK Pi 4B+ has a short KMS/MPP smoke result and a brief seven-tile real-camera run with viewer confirmation of both rotation cameras. Longer real-camera, boot, and rotation-timing tests remain. The site's camera gateway produced inconsistent frames at low RTSP latency; `stable` was needed for the rotating sources.
+- ROCK Pi 4B+ has a short KMS/MPP smoke result and a brief seven-tile real-camera run with viewer confirmation of both rotation cameras. Longer real-camera, boot, and rotation-timing tests remain. The site's UniFi gateway intermittently reports RTSP stream errors even at `stable` latency; Mosaivue retries individual branches and bounds full-renderer recovery restarts to once every five minutes.
 - Legacy OMXPlayer lacks exact crop, opacity, label overlay, snapshot, and native pixel-size behavior. It uses letterbox for the `native` aspect choice.
 - OMXPlayer `preconnect=next` uses one bounded extra decoder for sequential or reverse groups. Random and weighted groups prepare at switch time. There is no `all` preload mode.
 - LAN HTTP, local access to the `mosaivue` service account, and legacy OMXPlayer process arguments are trust boundaries. See [security design](security.md).

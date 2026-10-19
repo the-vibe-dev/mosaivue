@@ -6,7 +6,8 @@ import os
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, TypeVar
 from urllib.parse import urlsplit
 
@@ -66,6 +67,10 @@ class _SlotRuntime:
     prepared: _PreparedBranch | None = None
     failover_pending: bool = False
     restarting: bool = False
+    recovery_source_id: int | None = None
+    prepared_refresh_source_id: int | None = None
+    source_refresh_source_id: int | None = None
+    retired_sources: list[Any] = field(default_factory=list)
 
 
 @dataclass
@@ -389,7 +394,7 @@ class GStreamerRenderer(RendererBackend):
         source.set_property("uri", runtime.spec.url)
         if source.find_property("use-buffering"):
             source.set_property("use-buffering", False)
-        source.connect("pad-added", self._on_source_pad_added, runtime.spec.slot_id)
+        source.connect("pad-added", self._on_source_pad_added, runtime.spec.slot_id, source_queue)
         source.connect("source-setup", self._on_source_setup, runtime.spec.slot_id)
         source_queue.set_property("leaky", 2)
         source_queue.set_property("max-size-buffers", 2)
@@ -405,7 +410,7 @@ class GStreamerRenderer(RendererBackend):
         runtime.selector_camera_pad = camera_pad
         probe_pad = source_queue.get_static_pad("src")
         runtime.frame_probe_id = probe_pad.add_probe(
-            Gst.PadProbeType.BUFFER, self._on_frame, runtime.spec.slot_id
+            Gst.PadProbeType.BUFFER, self._on_frame, runtime.spec.slot_id, source_queue
         )
         source.sync_state_with_parent()
         source_queue.sync_state_with_parent()
@@ -424,6 +429,7 @@ class GStreamerRenderer(RendererBackend):
         ):
             if not prepared.ready or not prepared.last_frame_monotonic or time.monotonic() - prepared.last_frame_monotonic > 8:
                 self._restart_prepared(slot_id, prepared)
+                self._schedule_prepared_refresh(slot_id, prepared)
             return
         self._cancel_prepared(slot_id)
         assert self._pipeline is not None
@@ -460,18 +466,21 @@ class GStreamerRenderer(RendererBackend):
             self._pipeline.remove(queue)
             raise RuntimeError("Unable to link prepared source to selector")
         probe_id = queue.get_static_pad("src").add_probe(
-            Gst.PadProbeType.BUFFER, self._on_prepared_frame, slot_id
+            Gst.PadProbeType.BUFFER, self._on_prepared_frame, slot_id, queue
         )
         runtime.prepared = _PreparedBranch(spec, source, queue, selector_pad, probe_id)
         source.sync_state_with_parent()
         queue.sync_state_with_parent()
 
-    def _on_prepared_frame(self, _: Any, __: Any, slot_id: str) -> Any:
+    def _on_prepared_frame(self, _: Any, __: Any, slot_id: str, queue: Any) -> Any:
         runtime = self._slots.get(slot_id)
-        if runtime and runtime.prepared and not runtime.prepared.restarting:
+        if runtime and runtime.prepared and runtime.prepared.queue == queue and not runtime.prepared.restarting:
             runtime.prepared.frames += 1
             runtime.prepared.ready = True
             runtime.prepared.last_frame_monotonic = time.monotonic()
+            health = self._health.get(slot_id)
+            if health and health.state == HealthState.stalled:
+                self._request_failover(slot_id)
         return self.Gst.PadProbeReturn.OK
 
     def cancel_prepared(self, slot_id: str) -> None:
@@ -506,12 +515,12 @@ class GStreamerRenderer(RendererBackend):
             elif spec.transport == "udp":
                 source.set_property("protocols", 1)
 
-    def _on_source_pad_added(self, _: Any, pad: Any, slot_id: str, prepared_queue: Any | None = None) -> None:
+    def _on_source_pad_added(self, _: Any, pad: Any, slot_id: str, branch_queue: Any | None = None) -> None:
         runtime = self._slots.get(slot_id)
-        queue = prepared_queue or (runtime.source_queue if runtime else None)
+        queue = branch_queue or (runtime.source_queue if runtime else None)
         if not runtime or not queue:
             return
-        if prepared_queue is not None and (not runtime.prepared or runtime.prepared.queue != prepared_queue):
+        if queue != runtime.source_queue and (not runtime.prepared or runtime.prepared.queue != queue):
             return
         caps = pad.get_current_caps() or pad.query_caps(None)
         if not caps or not caps.to_string().startswith("video/"):
@@ -522,10 +531,10 @@ class GStreamerRenderer(RendererBackend):
             if result != self.Gst.PadLinkReturn.OK:
                 self._mark_offline(slot_id, f"Video pad link failed: {result.value_nick}")
 
-    def _on_frame(self, pad: Any, __: Any, slot_id: str) -> Any:
+    def _on_frame(self, pad: Any, __: Any, slot_id: str, queue: Any) -> Any:
         runtime = self._slots.get(slot_id)
         health = self._health.get(slot_id)
-        if runtime and health:
+        if runtime and health and runtime.source_queue == queue:
             health.last_frame_monotonic = time.monotonic()
             health.decoded_frames += 1
             health.detail = None
@@ -686,13 +695,13 @@ class GStreamerRenderer(RendererBackend):
             old.queue.get_static_pad("src").remove_probe(old.frame_probe_id)
             prepared.queue.get_static_pad("src").remove_probe(prepared.frame_probe_id)
             old.frame_probe_id = old.queue.get_static_pad("src").add_probe(
-                self.Gst.PadProbeType.BUFFER, self._on_prepared_frame, slot_id
+                self.Gst.PadProbeType.BUFFER, self._on_prepared_frame, slot_id, old.queue
             )
             runtime.source = prepared.source
             runtime.source_queue = prepared.queue
             runtime.selector_camera_pad = prepared.selector_pad
             runtime.frame_probe_id = prepared.queue.get_static_pad("src").add_probe(
-                self.Gst.PadProbeType.BUFFER, self._on_frame, slot_id
+                self.Gst.PadProbeType.BUFFER, self._on_frame, slot_id, prepared.queue
             )
             runtime.prepared = old
             runtime.failover_pending = False
@@ -851,6 +860,39 @@ class GStreamerRenderer(RendererBackend):
             self.GLib.timeout_add_seconds(1, resume)
 
         source.call_async(stop_source, None)
+        self._schedule_source_refresh(slot_id, runtime, source)
+
+    def _schedule_source_refresh(self, slot_id: str, runtime: _SlotRuntime, source: Any) -> None:
+        if runtime.source_refresh_source_id:
+            return
+
+        def refresh() -> bool:
+            current = self._slots.get(slot_id)
+            if current is not runtime:
+                return False
+            runtime.source_refresh_source_id = None
+            if runtime.source is not source:
+                return False
+            health = self._health.get(slot_id)
+            if health and health.state == HealthState.live and health.last_frame_monotonic and time.monotonic() - health.last_frame_monotonic < 8:
+                return False
+            if len(runtime.retired_sources) >= 2:
+                LOGGER.error("Fixed source still unavailable after two fresh branches", extra={"slot_id": slot_id})
+                return False
+            LOGGER.warning("Opening a fresh fixed camera source", extra={"slot_id": slot_id})
+            runtime.retired_sources.append(source)
+            runtime.source = None
+            runtime.source_queue = None
+            runtime.selector_camera_pad = None
+            runtime.frame_probe_id = None
+            runtime.restarting = False
+            try:
+                self._create_source_branch(runtime)
+            except Exception:
+                LOGGER.exception("Could not open fresh fixed camera source", extra={"slot_id": slot_id})
+            return False
+
+        runtime.source_refresh_source_id = self.GLib.timeout_add_seconds(10, refresh)
 
     def _require_slot(self, slot_id: str) -> _SlotRuntime:
         runtime = self._slots.get(slot_id)
@@ -885,6 +927,11 @@ class GStreamerRenderer(RendererBackend):
             # A rotation branch must never be torn down from the bus callback:
             # GStreamer can block its own main loop while stopping RTSP there.
             # Keep the wall responsive and retry when the warm branch recovers.
+            health = self._health.get(slot_id)
+            if health:
+                health.state = HealthState.stalled
+                health.detail = "Both rotation feeds unavailable; recovery pending"
+            self._arm_rotation_recovery(slot_id)
             return True
         runtime.failover_pending = True
 
@@ -902,6 +949,30 @@ class GStreamerRenderer(RendererBackend):
             LOGGER.exception("Could not request prepared rotation failover", extra={"slot_id": slot_id})
             return False
         return True
+
+    def _arm_rotation_recovery(self, slot_id: str) -> None:
+        runtime = self._slots.get(slot_id)
+        if not runtime or runtime.recovery_source_id:
+            return
+
+        def recover_or_restart() -> bool:
+            current = self._slots.get(slot_id)
+            if not current:
+                return False
+            current.recovery_source_id = None
+            health = self._health.get(slot_id)
+            if health and health.last_frame_monotonic and time.monotonic() - health.last_frame_monotonic < 8:
+                return False
+            prepared = current.prepared
+            if prepared and prepared.ready and prepared.last_frame_monotonic and time.monotonic() - prepared.last_frame_monotonic < 8:
+                self._request_failover(slot_id)
+                self._arm_rotation_recovery(slot_id)
+                return False
+            LOGGER.error("Both rotation sources remained unavailable", extra={"slot_id": slot_id})
+            self._restart_renderer_with_cooldown(slot_id, "both rotation sources failed")
+            return False
+
+        runtime.recovery_source_id = self.GLib.timeout_add_seconds(15, recover_or_restart)
 
     def _mark_offline(self, slot_id: str, detail: str) -> None:
         runtime = self._slots.get(slot_id)
@@ -933,6 +1004,10 @@ class GStreamerRenderer(RendererBackend):
         runtime.reconnect_source_id = self.GLib.timeout_add_seconds(delay, reconnect)
 
     def _on_bus_message(self, _: Any, message: Any) -> None:
+        if message.type in (self.Gst.MessageType.ERROR, self.Gst.MessageType.WARNING, self.Gst.MessageType.EOS):
+            slot_id = self._slot_for_element(message.src)
+            if slot_id and self._is_retired_message(message.src, slot_id):
+                return
         if message.type == self.Gst.MessageType.ERROR:
             error, debug = message.parse_error()
             slot_id = self._slot_for_element(message.src)
@@ -976,6 +1051,64 @@ class GStreamerRenderer(RendererBackend):
             runtime.prepared.ready = False
             runtime.prepared.last_frame_monotonic = None
             self._restart_prepared(slot_id, runtime.prepared)
+            self._schedule_prepared_refresh(slot_id, runtime.prepared)
+            if runtime.failover_pending:
+                health = self._health.get(slot_id)
+                if health:
+                    health.state = HealthState.stalled
+                    health.detail = "Both rotation feeds unavailable; recovery pending"
+                self._arm_rotation_recovery(slot_id)
+
+    def _schedule_prepared_refresh(self, slot_id: str, prepared: _PreparedBranch) -> None:
+        runtime = self._slots.get(slot_id)
+        if not runtime or runtime.prepared_refresh_source_id:
+            return
+
+        def refresh() -> bool:
+            current = self._slots.get(slot_id)
+            if not current:
+                return False
+            current.prepared_refresh_source_id = None
+            if current.prepared is not prepared:
+                return False
+            if prepared.ready and prepared.last_frame_monotonic and time.monotonic() - prepared.last_frame_monotonic < 8:
+                return False
+            if len(current.retired_sources) >= 2:
+                LOGGER.error("Prepared source still unavailable after two fresh branches", extra={"slot_id": slot_id})
+                self._restart_renderer_with_cooldown(slot_id, "standby source failures")
+                return False
+            LOGGER.warning("Opening a fresh prepared rotation source", extra={"slot_id": slot_id})
+            current.retired_sources.append(prepared.source)
+            current.prepared = None
+            try:
+                self._prepare_stream(slot_id, prepared.spec)
+            except Exception:
+                LOGGER.exception("Could not open fresh prepared rotation source", extra={"slot_id": slot_id})
+            return False
+
+        runtime.prepared_refresh_source_id = self.GLib.timeout_add_seconds(6, refresh)
+
+    def _restart_renderer_with_cooldown(self, slot_id: str, reason: str) -> None:
+        """Recycle exhausted decoders once, then avoid repeated wall interruptions."""
+        marker = Path(os.environ.get("MOSAIVUE_DATA_DIR", "/var/lib/mosaivue")) / "rotation-recovery.stamp"
+        now = time.time()
+        try:
+            last = float(marker.read_text(encoding="utf-8"))
+        except (FileNotFoundError, ValueError):
+            last = 0.0
+        except OSError:
+            LOGGER.exception("Could not read rotation recovery marker", extra={"slot_id": slot_id})
+            return
+        if now - last < 300:
+            LOGGER.warning("Keeping the active camera while standby remains unavailable", extra={"slot_id": slot_id})
+            return
+        try:
+            marker.write_text(f"{now}\n", encoding="utf-8")
+        except OSError:
+            LOGGER.exception("Could not write rotation recovery marker", extra={"slot_id": slot_id})
+            return
+        LOGGER.error("Recycling renderer after %s", reason, extra={"slot_id": slot_id})
+        os._exit(75)
 
     def _restart_prepared(self, slot_id: str, prepared: _PreparedBranch) -> None:
         now = time.monotonic()
@@ -1010,6 +1143,19 @@ class GStreamerRenderer(RendererBackend):
         while current is not None and prepared_source is not None:
             try:
                 if current == prepared_source:
+                    return True
+                current = current.get_parent()
+            except Exception:
+                break
+        return False
+
+    def _is_retired_message(self, element: Any, slot_id: str) -> bool:
+        runtime = self._slots.get(slot_id)
+        retired = runtime.retired_sources if runtime else []
+        current = element
+        while current is not None:
+            try:
+                if current in retired:
                     return True
                 current = current.get_parent()
             except Exception:
