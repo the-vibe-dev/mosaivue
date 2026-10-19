@@ -1084,8 +1084,15 @@ class GStreamerRenderer(RendererBackend):
                 self._request_failover(slot_id)
                 self._arm_rotation_recovery(slot_id)
                 return False
+            if not current.restarting and not current.source_refresh_source_id and not current.reconnect_source_id:
+                LOGGER.warning("Retrying unavailable rotation camera", extra={"slot_id": slot_id})
+                self._restart_stream(slot_id)
+            if self._started_at is not None and time.monotonic() - self._started_at < 60:
+                self._arm_rotation_recovery(slot_id)
+                return False
             LOGGER.error("Both rotation sources remained unavailable", extra={"slot_id": slot_id})
             self._restart_renderer_with_cooldown(slot_id, "both rotation sources failed")
+            self._arm_rotation_recovery(slot_id)
             return False
 
         runtime.recovery_source_id = self.GLib.timeout_add_seconds(15, recover_or_restart)

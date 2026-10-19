@@ -117,6 +117,7 @@ def test_rtsps_source_uses_tcp_and_stable_jitter_buffer() -> None:
 
 def test_unready_rotation_source_stays_responsive_then_restarts_service(monkeypatch, tmp_path) -> None:
     renderer = object.__new__(GStreamerRenderer)
+    renderer._started_at = time.monotonic() - 70
     selected = []
     placeholder = object()
     renderer._slots = {
@@ -124,6 +125,9 @@ def test_unready_rotation_source_stays_responsive_then_restarts_service(monkeypa
             prepared=SimpleNamespace(ready=False, last_frame_monotonic=None),
             failover_pending=False,
             recovery_source_id=None,
+            restarting=False,
+            source_refresh_source_id=None,
+            reconnect_source_id=None,
             selector=SimpleNamespace(set_property=lambda key, value: selected.append((key, value))),
             selector_placeholder_pad=placeholder,
             placeholder_text=SimpleNamespace(set_property=lambda *_: None),
@@ -135,6 +139,7 @@ def test_unready_rotation_source_stays_responsive_then_restarts_service(monkeypa
     renderer._health = {"rotation": health}
     scheduled = []
     renderer.GLib = SimpleNamespace(timeout_add_seconds=lambda _, callback: scheduled.append(callback) or 1)
+    renderer._restart_stream = lambda _: None
     exits: list[int] = []
     monkeypatch.setattr("mosaivue.renderer.gstreamer.os._exit", exits.append)
     monkeypatch.setenv("MOSAIVUE_DATA_DIR", str(tmp_path))
@@ -145,6 +150,35 @@ def test_unready_rotation_source_stays_responsive_then_restarts_service(monkeypa
     assert len(scheduled) == 1
     scheduled[0]()
     assert exits == [75]
+
+
+def test_startup_rotation_failure_retries_its_tile_before_wall_recycle(monkeypatch, tmp_path) -> None:
+    renderer = object.__new__(GStreamerRenderer)
+    renderer._started_at = time.monotonic() - 30
+    renderer._slots = {
+        "rotation": SimpleNamespace(
+            prepared=SimpleNamespace(ready=False, last_frame_monotonic=None),
+            recovery_source_id=None, restarting=False,
+            source_refresh_source_id=None, reconnect_source_id=None,
+        )
+    }
+    renderer._health = {
+        "rotation": SimpleNamespace(last_frame_monotonic=None)
+    }
+    scheduled = []
+    retried = []
+    renderer.GLib = SimpleNamespace(timeout_add_seconds=lambda _, callback: scheduled.append(callback) or 1)
+    renderer._restart_stream = retried.append
+    exits: list[int] = []
+    monkeypatch.setattr("mosaivue.renderer.gstreamer.os._exit", exits.append)
+    monkeypatch.setenv("MOSAIVUE_DATA_DIR", str(tmp_path))
+
+    renderer._arm_rotation_recovery("rotation")
+    scheduled[0]()
+
+    assert retried == ["rotation"]
+    assert exits == []
+    assert len(scheduled) == 2
 
 
 def test_failed_prepared_source_resets_on_gstreamer_worker() -> None:
