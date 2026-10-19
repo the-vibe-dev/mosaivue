@@ -108,6 +108,9 @@ rsync -a --delete \
   --exclude '.git' --exclude '.venv' --exclude 'frontend/node_modules' --exclude 'frontend/dist' \
   --exclude '__pycache__' --exclude '.pytest_cache' --exclude '*.pyc' \
   "$SOURCE_ROOT/" "$RELEASE_DIR.new/"
+# rsync -a copies the source root's mode too. curl/update installers unpack
+# into private mktemp directories, but the service user must traverse releases.
+chmod 0755 "$RELEASE_DIR.new"
 "$PYTHON_BIN" -m venv --system-site-packages "$RELEASE_DIR.new/.venv"
 "$RELEASE_DIR.new/.venv/bin/python" -m pip install --upgrade pip wheel
 if [[ "$CW_ARCH" == armhf && "$CW_OS_VERSION" == 11 ]]; then
@@ -220,7 +223,10 @@ if [[ "$NO_START" -eq 0 ]]; then
   systemctl enable mosaivue-renderer.service mosaivue-server.service
   # enable --now leaves active units running their old Python environment.
   # Restart after switching current so an update activates the new release.
-  systemctl restart mosaivue-renderer.service mosaivue-server.service
+  # The renderer owns /run/mosaivue through RuntimeDirectory. Start it first
+  # so the web service's ReadWritePaths mount exists when its namespace starts.
+  systemctl restart mosaivue-renderer.service
+  systemctl restart mosaivue-server.service
   HEALTH_HOST="$(jq -r '.bind' /etc/mosaivue/config.json)"
   [[ "$HEALTH_HOST" == 0.0.0.0 || "$HEALTH_HOST" == :: ]] && HEALTH_HOST=127.0.0.1
   [[ "$HEALTH_HOST" == *:* ]] && HEALTH_HOST="[$HEALTH_HOST]"
