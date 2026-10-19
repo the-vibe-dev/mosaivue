@@ -15,7 +15,7 @@ This document records what is ready to stage privately and what remains unqualif
 ## Limits to state in a public beta
 
 - Physical output and hardware decoder performance on Raspberry Pi 4 and Pi 5 remain unqualified.
-- ROCK Pi 4B+ has a short KMS/MPP smoke result and a brief seven-tile real-camera run with viewer confirmation of both rotation cameras. Sustained seven-tile rotation is not qualified: the site's UniFi RTSP source intermittently reports `not-negotiated` in the shared GStreamer pipeline. Mosaivue retries individual branches and preserves other live tiles; full-renderer recovery is limited to a wall without other recent frames and at most once every five minutes. Longer real-camera, boot, and rotation-timing tests remain.
+- ROCK Pi 4B+ has KMS/MPP smoke results and a real seven-tile run with viewer confirmation of both rotation cameras. Sustained rotation is not qualified: an approximately ten-hour run stopped switching after 466 cuts while the active rotation camera and other six tiles remained LIVE. The standby source stayed unready for hours; the dashboard did not show that rotation had stopped. Per-slot restart did not recover it, while a clean renderer stop and start did. A forced fresh standby replacement also crashed GStreamer in a repeatable local RTSP test. Fix and retest these recovery paths before tagging a beta candidate.
 - Legacy OMXPlayer lacks exact crop, opacity, label overlay, snapshot, and native pixel-size behavior. It uses letterbox for the `native` aspect choice.
 - OMXPlayer `preconnect=next` uses one bounded extra decoder for sequential or reverse groups. Random and weighted groups prepare at switch time. There is no `all` preload mode.
 - LAN HTTP, local access to the `mosaivue` service account, and legacy OMXPlayer process arguments are trust boundaries. See [security design](security.md).
@@ -25,7 +25,7 @@ This document records what is ready to stage privately and what remains unqualif
 
 1. Keep the staging repository private while reviewing source, screenshots, license inventory, generated OpenAPI, and built archives for site credentials or private deployment files.
 2. Confirm the Python package version, Git tag, changelog, source archive name, and GitHub prerelease flag agree.
-3. Run CI, frontend browser checks, `scripts/check_release.py`, and a clean source-archive install test. Repeat the hardware matrix before broader platform claims.
+3. Resolve the GitHub Actions account billing/spending-limit error, then run CI. Frontend browser checks, `scripts/check_release.py`, and a clean source-archive package install have passed locally; repeat the hardware matrix before broader platform claims.
 4. Review the [security policy](../SECURITY.md) and [third-party notices](../THIRD_PARTY_NOTICES.md), especially the external OMXPlayer and FFmpeg dependencies.
 5. Publish a public repository or prerelease only after the staged commit and artifacts have been reviewed. The release workflow creates a prerelease for beta tags; staging a branch does not create a tag or release.
 
