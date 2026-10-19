@@ -8,7 +8,7 @@ Mosaivue is a local-first camera-monitor appliance for Raspberry Pi and Linux. I
 
 Mosaivue is designed for Raspberry Pi OS Lite and does not require a desktop session. The control plane, camera credentials, layouts, health data, and previews stay on the appliance. There is no required cloud account, analytics service, or telemetry.
 
-> **Beta status:** v0.1.0b1 is being staged privately for a public beta. One Raspberry Pi 3B+ running 32-bit Bullseye has been tested with seven live feeds and an OMXPlayer HDMI wall at 1920×1080. A ROCK Pi 4B+ has passed a four-stream synthetic H.264 GStreamer/KMS smoke test at 1280×720; one real camera has run at 1920×1080. These are site results, not stream-count guarantees. Pi 4 and Pi 5 physical output and decode behavior still need qualification. See [beta notes](docs/beta-release.md).
+> **Beta status:** v0.1.0b1 is staged privately for the tested Raspberry Pi 3B+ and ROCK Pi 4B+ paths. The Pi 3 ran a seven-feed OMXPlayer wall at 1920×1080 for over 12 days and made more than 69,000 rotation cuts. The ROCK Pi ran a seven-tile GStreamer/KMS wall at 1920×1080 for over four hours and made more than 1,000 cuts on its tested build. Its latest cold start required one automatic renderer restart, so cold-start reliability remains under test. These are site results, not stream-count guarantees. Raspberry Pi 4 and Pi 5 physical output and decode behavior remain unqualified. See [beta notes](docs/beta-release.md).
 
 ## What is included
 
@@ -63,8 +63,8 @@ MOSAIVUE_SCREENSHOT_URL=http://127.0.0.1:8080 \
 |---|---|---|
 | Raspberry Pi 5, 64-bit Raspberry Pi OS Lite | Primary | DRM/KMS or GL/Wayland sink selected from detected capabilities |
 | Raspberry Pi 4, 64-bit Raspberry Pi OS Lite | Primary | Prefer H.264 substreams where that best matches available decode support |
-| Raspberry Pi 3B+ with Bullseye 32-bit and OMXPlayer | Tested beta path | One site has run seven live feeds at 1920×1080; other camera mixes need measurement |
-| ROCK Pi 4B+ | Tested beta path | Debian 12 arm64, Rockchip MPP, `kmssink`: four local 360p H.264 streams and source replacement at 720p output passed a short smoke test; real camera mixes and long runs remain unqualified |
+| Raspberry Pi 3B+ with Bullseye 32-bit and OMXPlayer | Tested beta path | One site ran seven live feeds at 1920×1080 for over 12 days; other camera mixes need measurement |
+| ROCK Pi 4B+ | Tested beta path | Debian 12 arm64, Rockchip MPP, `kmssink`: one seven-tile real-camera wall ran at 1920×1080 for over four hours; cold starts and other camera mixes still need qualification |
 | Debian/Ubuntu ARM64 | Supported | Hardware decode depends on board and installed GStreamer plugins |
 | Debian/Ubuntu x86_64 | Supported | Useful for development and Intel/AMD appliance builds |
 
@@ -207,7 +207,7 @@ GObject introspection and GStreamer are installed through the operating system. 
 
 ## Hardware qualification
 
-The project includes a synthetic compositor benchmark and a [hardware test plan](docs/hardware-test-plan.md). A Pi 3B+ beta site has been exercised with OMXPlayer, while the automated build environment has no physical display. Pi 4, Pi 5, ROCK Pi 4+, and the GStreamer hardware path still need measured results before stable hardware claims.
+The project includes a synthetic compositor benchmark and a [hardware test plan](docs/hardware-test-plan.md). A Pi 3B+ OMXPlayer wall and a ROCK Pi 4B+ GStreamer/KMS wall have site-specific results. The automated build environment has no physical display. Raspberry Pi 4 and Pi 5 still need measured output and decode results before hardware claims.
 
 ## Security and privacy
 

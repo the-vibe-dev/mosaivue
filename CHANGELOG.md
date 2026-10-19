@@ -14,6 +14,9 @@ All notable changes follow a Keep a Changelog-style format. Version numbers use 
 - A stalled rotating tile selects its live placeholder while both RTSP feeds reconnect. Input selectors do not synchronize inactive camera pads to the active stream, so a standby decoder can keep consuming live frames between cuts. The compositor ignores input pads that have not produced a buffer and reserves latency for dynamically attached RTSP sources.
 - The Rock Pi camera profiles that needed more RTSP jitter tolerance can use the `stable` latency preset.
 - Installer release roots retain service-account traversal permissions when staged from a private temporary directory; the renderer starts before the web service so its runtime directory exists for both units.
+- Inactive GStreamer selector pads keep accepting live standby buffers, and a camera that produces no first frame receives a targeted retry. Rotation recovery retries its own tile during startup before considering a renderer recycle.
+- OMXPlayer waits for 30 seconds without a successful playback confirmation before restarting a player; a single transient D-Bus check failure no longer triggers a restart on an established tile.
+- The web server starts serving requests before its hardware capability refresh finishes, reducing dashboard startup delay on the tested Pi 3B+.
 
 ## [0.1.0b1] - 2026-10-07
 

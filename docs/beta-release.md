@@ -4,7 +4,7 @@ This document records what is ready to stage privately and what remains unqualif
 
 ## Tested path
 
-- Raspberry Pi 3B+, 32-bit Raspberry Pi OS Bullseye, OMXPlayer hardware overlays, 1920×1080 HDMI output.
+- Raspberry Pi 3B+, 32-bit Raspberry Pi OS Bullseye, OMXPlayer hardware overlays, 1920×1080 HDMI output. The original installed renderer ran for over 12 days with seven LIVE tiles, 69,120 rotation cuts, and no service restart. It logged 121 playback-check restarts across its final seven days, including 61 on one fixed tile. The follow-up requires 30 seconds without a successful playback check before restarting one player. Its updated renderer reached seven LIVE tiles and 36 cuts with zero restarts in the initial post-update observation. The web service became healthy 17 seconds after its updated startup, while the renderer stayed running.
 - Seven simultaneous live camera tiles at one test site, including an RTSPS stream from a UniFi system. This does not establish a general seven-stream capacity for other codecs, bitrates, or camera mixes.
 - Camera import from displaycameras, admin setup, camera previews, visual layout editing, renderer selection, service restart, and rollback were exercised on that site.
 - The two-camera rotation tile now prepares its next OMXPlayer offscreen and cuts using D-Bus positioning and layer controls. On the test Pi, more than 20 switches completed with zero recovery restarts; physical-display continuity still needs viewer confirmation.
@@ -15,7 +15,7 @@ This document records what is ready to stage privately and what remains unqualif
 ## Limits to state in a public beta
 
 - Physical output and hardware decoder performance on Raspberry Pi 4 and Pi 5 remain unqualified.
-- ROCK Pi 4B+ has KMS/MPP smoke results and a real seven-tile run with viewer confirmation of both rotation cameras. An earlier approximately ten-hour run stopped switching after 466 cuts while the active rotation camera and other six tiles remained LIVE. The current renderer marks repeated missed cuts as `DEGRADED` in API and dashboard health. Its video-only rotation branch passed forced fresh replacement and source recovery tests on the ROCK Pi. The mixed seven-tile wall passed 1,082 cuts over more than four hours after inactive selector pads were configured to accept standby buffers. A fresh install briefly lost camera feeds on its first start and recovered after a service restart; the follow-up adds targeted first-frame and rotation startup retries. Repeat cold-start and overnight runs are required before sustained rotation is qualified.
+- ROCK Pi 4B+ has KMS/MPP smoke results and a real seven-tile run with viewer confirmation of both rotation cameras. An earlier approximately ten-hour run stopped switching after 466 cuts while the active rotation camera and other six tiles remained LIVE. The current renderer marks repeated missed cuts as `DEGRADED` in API and dashboard health. Its video-only rotation branch passed forced fresh replacement and source recovery tests on the ROCK Pi. The mixed seven-tile wall passed 1,082 cuts over more than four hours after inactive selector pads were configured to accept standby buffers. The latest clean start recycled once after several feeds failed to decode, then reached seven LIVE tiles; its second process passed 114 cuts with zero stream restarts during the initial observation. Targeted first-frame and rotation startup retries are included, but single-process cold-start and overnight rotation remain unqualified. This is a ROCK Pi 4B+ result, not a Raspberry Pi 4 result.
 - Legacy OMXPlayer lacks exact crop, opacity, label overlay, snapshot, and native pixel-size behavior. It uses letterbox for the `native` aspect choice.
 - OMXPlayer `preconnect=next` uses one bounded extra decoder for sequential or reverse groups. Random and weighted groups prepare at switch time. There is no `all` preload mode.
 - LAN HTTP, local access to the `mosaivue` service account, and legacy OMXPlayer process arguments are trust boundaries. See [security design](security.md).
@@ -25,9 +25,10 @@ This document records what is ready to stage privately and what remains unqualif
 
 1. Keep the staging repository private while reviewing source, screenshots, license inventory, generated OpenAPI, and built archives for site credentials or private deployment files.
 2. Confirm the Python package version, Git tag, changelog, source archive name, and GitHub prerelease flag agree.
-3. Resolve the GitHub Actions account billing/spending-limit error, then run CI. Frontend browser checks, `scripts/check_release.py`, and a clean source-archive package install have passed locally; repeat the hardware matrix before broader platform claims.
-4. Review the [security policy](../SECURITY.md) and [third-party notices](../THIRD_PARTY_NOTICES.md), especially the external OMXPlayer and FFmpeg dependencies.
-5. Publish a public repository or prerelease only after the staged commit and artifacts have been reviewed. The release workflow creates a prerelease for beta tags; staging a branch does not create a tag or release.
+3. Resolve the GitHub Actions account billing/spending-limit error, then run CI. Frontend browser checks, `scripts/check_release.py`, and clean source-archive installs have passed locally or on the two appliances; repeat the hardware matrix before broader platform claims.
+4. Repeat the ROCK Pi cold start and overnight rotation on the staged build. The first-process recycle on the latest clean start and the earlier silent rotation stall remain open qualification items.
+5. Review the [security policy](../SECURITY.md) and [third-party notices](../THIRD_PARTY_NOTICES.md), especially the external OMXPlayer and FFmpeg dependencies.
+6. Publish a public repository or prerelease only after the staged commit and artifacts have been reviewed. The release workflow creates a prerelease for beta tags; staging a branch does not create a tag or release.
 
 The new Mosaivue repository is staged privately first. Its CI must pass before public publication; local checks and Pi results are recorded in [Build verification](../BUILD-VERIFICATION.md).
 
