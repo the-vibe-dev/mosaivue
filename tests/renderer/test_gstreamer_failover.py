@@ -19,6 +19,67 @@ def test_inactive_selector_pad_accepts_live_standby_buffers() -> None:
     assert properties == {"always-ok": True}
 
 
+def test_first_frame_timeout_retries_only_stuck_camera() -> None:
+    renderer = object.__new__(GStreamerRenderer)
+    now = time.monotonic()
+    renderer._slots = {
+        "stuck": SimpleNamespace(
+            connect_started_monotonic=now - 21, restarting=False,
+            source_refresh_source_id=None, reconnect_source_id=None, prepared=None,
+            selector=SimpleNamespace(set_property=lambda *_: None),
+            selector_placeholder_pad=object(),
+            placeholder_text=SimpleNamespace(set_property=lambda *_: None),
+            spec=SimpleNamespace(camera_name="Stuck"),
+        ),
+        "healthy": SimpleNamespace(connect_started_monotonic=now - 100),
+    }
+    renderer._health = {
+        "stuck": SimpleNamespace(
+            state=HealthState.connecting, detail=None, last_frame_monotonic=None,
+            reconnect_backoff_seconds=1.0,
+        ),
+        "healthy": SimpleNamespace(
+            state=HealthState.live, last_frame_monotonic=now,
+        ),
+    }
+    scheduled = []
+    renderer.GLib = SimpleNamespace(
+        timeout_add_seconds=lambda delay, callback: scheduled.append((delay, callback)) or 1
+    )
+
+    assert renderer._watchdog_tick() is True
+    assert renderer._health["stuck"].state == HealthState.offline
+    assert renderer._health["stuck"].detail == "No first video frame received within 20 seconds"
+    assert renderer._health["healthy"].state == HealthState.live
+    assert [delay for delay, _ in scheduled] == [1]
+    assert renderer._health["stuck"].reconnect_backoff_seconds == 2.0
+    renderer._watchdog_tick()
+    assert len(scheduled) == 1
+    retried = []
+    renderer._restart_stream = retried.append
+    scheduled[0][1]()
+    assert retried == ["stuck"]
+    assert renderer._slots["stuck"].reconnect_source_id is None
+
+
+def test_first_frame_timeout_waits_for_pending_branch_refresh() -> None:
+    renderer = object.__new__(GStreamerRenderer)
+    renderer._slots = {
+        "stuck": SimpleNamespace(
+            connect_started_monotonic=time.monotonic() - 21,
+            restarting=False, source_refresh_source_id=1,
+            reconnect_source_id=None,
+        )
+    }
+    renderer._health = {
+        "stuck": SimpleNamespace(state=HealthState.reconnecting, last_frame_monotonic=None)
+    }
+    renderer._schedule_reconnect = lambda _: (_ for _ in ()).throw(AssertionError("duplicate retry"))
+
+    assert renderer._watchdog_tick() is True
+    assert renderer._health["stuck"].state == HealthState.reconnecting
+
+
 def test_failed_rotation_source_uses_warm_camera_without_reconnect() -> None:
     requested: list[str] = []
     renderer = object.__new__(GStreamerRenderer)

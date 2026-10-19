@@ -80,6 +80,7 @@ class _SlotRuntime:
     recovery_source_id: int | None = None
     prepared_refresh_source_id: int | None = None
     source_refresh_source_id: int | None = None
+    connect_started_monotonic: float | None = None
     retired_sources: list[Any] = field(default_factory=list)
 
 
@@ -423,6 +424,7 @@ class GStreamerRenderer(RendererBackend):
         runtime.source = source
         runtime.source_queue = source_queue
         runtime.selector_camera_pad = camera_pad
+        runtime.connect_started_monotonic = time.monotonic()
         probe_pad = source_queue.get_static_pad("src")
         runtime.frame_probe_id = probe_pad.add_probe(
             Gst.PadProbeType.BUFFER, self._on_frame, runtime.spec.slot_id, source_queue
@@ -994,6 +996,23 @@ class GStreamerRenderer(RendererBackend):
     def _watchdog_tick(self) -> bool:
         now = time.monotonic()
         for slot_id, health in list(self._health.items()):
+            runtime = self._slots.get(slot_id)
+            if (
+                runtime
+                and health.state in (HealthState.connecting, HealthState.reconnecting)
+                and runtime.connect_started_monotonic is not None
+                and now - runtime.connect_started_monotonic > 20
+                and not runtime.restarting
+                and not runtime.source_refresh_source_id
+                and not runtime.reconnect_source_id
+            ):
+                prepared = runtime.prepared
+                if prepared and prepared.ready and prepared.last_frame_monotonic and now - prepared.last_frame_monotonic < 8:
+                    if self._request_failover(slot_id):
+                        continue
+                self._mark_offline(slot_id, "No first video frame received within 20 seconds")
+                self._schedule_reconnect(slot_id)
+                continue
             if (
                 health.state == HealthState.live
                 and health.last_frame_monotonic
