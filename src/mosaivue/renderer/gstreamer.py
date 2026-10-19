@@ -65,6 +65,7 @@ class _SlotRuntime:
     reconnect_source_id: int | None = None
     prepared: _PreparedBranch | None = None
     failover_pending: bool = False
+    restarting: bool = False
 
 
 @dataclass
@@ -77,6 +78,8 @@ class _PreparedBranch:
     frames: int = 0
     ready: bool = False
     last_frame_monotonic: float | None = None
+    restarting: bool = False
+    last_restart_monotonic: float = 0.0
 
 
 class GStreamerRenderer(RendererBackend):
@@ -419,6 +422,8 @@ class GStreamerRenderer(RendererBackend):
         if prepared and (prepared.spec.camera_id, prepared.spec.stream_profile_id, prepared.spec.url) == (
             spec.camera_id, spec.stream_profile_id, spec.url
         ):
+            if not prepared.ready or not prepared.last_frame_monotonic or time.monotonic() - prepared.last_frame_monotonic > 8:
+                self._restart_prepared(slot_id, prepared)
             return
         self._cancel_prepared(slot_id)
         assert self._pipeline is not None
@@ -463,7 +468,7 @@ class GStreamerRenderer(RendererBackend):
 
     def _on_prepared_frame(self, _: Any, __: Any, slot_id: str) -> Any:
         runtime = self._slots.get(slot_id)
-        if runtime and runtime.prepared:
+        if runtime and runtime.prepared and not runtime.prepared.restarting:
             runtime.prepared.frames += 1
             runtime.prepared.ready = True
             runtime.prepared.last_frame_monotonic = time.monotonic()
@@ -816,14 +821,36 @@ class GStreamerRenderer(RendererBackend):
 
     def _restart_stream(self, slot_id: str) -> None:
         runtime = self._require_slot(slot_id)
+        if runtime.restarting:
+            return
         health = self._health[slot_id]
         health.restart_count += 1
         health.last_restart_reason = "Player recovery or manual restart"
         health.state = HealthState.reconnecting
         runtime.selector.set_property("active-pad", runtime.selector_placeholder_pad)
         runtime.placeholder_text.set_property("text", f"{runtime.spec.camera_name}\nReconnecting…")
-        self._remove_source_branch(runtime)
-        self._create_source_branch(runtime)
+        if runtime.source is None:
+            self._create_source_branch(runtime)
+            return
+        runtime.restarting = True
+        source = runtime.source
+
+        def stop_source(element: Any, _: Any) -> None:
+            try:
+                element.set_state(self.Gst.State.NULL)
+            except Exception:
+                LOGGER.exception("Could not stop failed stream", extra={"slot_id": slot_id})
+
+            def resume() -> bool:
+                current = self._slots.get(slot_id)
+                if current is runtime and current.source is source:
+                    runtime.restarting = False
+                    source.sync_state_with_parent()
+                return False
+
+            self.GLib.timeout_add_seconds(1, resume)
+
+        source.call_async(stop_source, None)
 
     def _require_slot(self, slot_id: str) -> _SlotRuntime:
         runtime = self._slots.get(slot_id)
@@ -948,6 +975,33 @@ class GStreamerRenderer(RendererBackend):
         if runtime and runtime.prepared:
             runtime.prepared.ready = False
             runtime.prepared.last_frame_monotonic = None
+            self._restart_prepared(slot_id, runtime.prepared)
+
+    def _restart_prepared(self, slot_id: str, prepared: _PreparedBranch) -> None:
+        now = time.monotonic()
+        if prepared.restarting or now - prepared.last_restart_monotonic < 5:
+            return
+        prepared.restarting = True
+        prepared.last_restart_monotonic = now
+
+        def stop_source(source: Any, _: Any) -> None:
+            try:
+                source.set_state(self.Gst.State.NULL)
+            except Exception:
+                LOGGER.exception("Could not stop failed prepared stream", extra={"slot_id": slot_id})
+
+            def resume() -> bool:
+                runtime = self._slots.get(slot_id)
+                if runtime and runtime.prepared is prepared:
+                    prepared.restarting = False
+                    prepared.source.sync_state_with_parent()
+                return False
+
+            self.GLib.timeout_add_seconds(1, resume)
+
+        # A blocking RTSP state change on the GLib bus thread stalls every
+        # camera. GStreamer runs this reset on a worker thread instead.
+        prepared.source.call_async(stop_source, None)
 
     def _is_prepared_message(self, element: Any, slot_id: str) -> bool:
         runtime = self._slots.get(slot_id)

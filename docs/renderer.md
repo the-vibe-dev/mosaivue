@@ -92,6 +92,13 @@ When the active branch fails, the GStreamer bus asks the controller to select
 the warm alternate. RTSP teardown in the bus callback can block the shared
 video loop, so a rotation branch is kept in place if its alternate is not yet
 ready; the controller retries when fresh frames arrive.
+Failed prepared and fixed sources reset on a GStreamer worker thread. Their
+existing selector branches remain in the pipeline while RTSP reconnects, so
+the other tiles continue to render. A rotation candidate is never selected
+until it has produced a recent decoded frame.
+On ROCK Pi, `scripts/rockpi-smoke.py --streams 2 --seconds 15 --sink fakesink --recovery`
+exercises both recovery paths with local test streams while the normal HDMI
+wall stays running.
 
 ## Native backend decision
 

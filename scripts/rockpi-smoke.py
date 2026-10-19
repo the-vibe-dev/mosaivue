@@ -2,8 +2,9 @@
 """Exercise Rockchip KMS composition with local H.264 RTSP test streams.
 
 Requires gir1.2-gst-rtsp-server-1.0 and the normal Mosaivue GStreamer install.
-Run as the mosaivue user after stopping mosaivue-renderer.service so kmssink
-can acquire the HDMI connector. No camera credentials or database changes are used.
+Run as the mosaivue user. Stop mosaivue-renderer.service for the default
+kmssink output; --sink fakesink can run alongside the HDMI wall. No camera
+credentials or database changes are used.
 """
 from __future__ import annotations
 
@@ -14,10 +15,10 @@ import gi
 
 gi.require_version("Gst", "1.0")
 gi.require_version("GstRtspServer", "1.0")
-from gi.repository import Gst, GstRtspServer
+from gi.repository import Gst, GstRtspServer  # noqa: E402
 
-from mosaivue.renderer.base import Rect, StreamSpec
-from mosaivue.renderer.gstreamer import GStreamerRenderer
+from mosaivue.renderer.base import Rect, StreamSpec  # noqa: E402
+from mosaivue.renderer.gstreamer import GStreamerRenderer  # noqa: E402
 
 
 def spec(index: int, *, url_index: int | None = None) -> StreamSpec:
@@ -37,6 +38,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--streams", type=int, choices=range(2, 5), default=4)
     parser.add_argument("--seconds", type=int, default=15)
+    parser.add_argument("--sink", choices=("kmssink", "fakesink"), default="kmssink")
+    parser.add_argument("--recovery", action="store_true", help="exercise fixed and prepared source resets")
     args = parser.parse_args()
     if args.seconds < 15:
         parser.error("--seconds must be at least 15")
@@ -59,7 +62,7 @@ def main() -> int:
 
     renderer = GStreamerRenderer()
     rows = (args.streams + 1) // 2
-    renderer.initialize(width=1280, height=rows * 360, sink="kmssink")
+    renderer.initialize(width=1280, height=rows * 360, sink=args.sink)
     try:
         for index in range(args.streams):
             renderer.add_stream(spec(index))
@@ -67,10 +70,16 @@ def main() -> int:
         renderer.prepare_stream("test-0", spec(0, url_index=1))
         time.sleep(5)
         before = renderer.health()
+        if args.recovery:
+            renderer._call(renderer._mark_prepared_unavailable, "test-0")
+            time.sleep(6)
         renderer.activate_prepared_stream("test-0", spec(0, url_index=1))
         renderer.prepare_stream("test-0", spec(0))
         time.sleep(5)
         renderer.activate_prepared_stream("test-0", spec(0))
+        if args.recovery:
+            renderer.restart_stream("test-1")
+            time.sleep(5)
         time.sleep(args.seconds - 10)
         after = renderer.health()
         summary = {
@@ -87,7 +96,8 @@ def main() -> int:
         }
         print(summary, flush=True)
         for slot, item in after["streams"].items():
-            if item["state"] != "LIVE" or item["restart_count"]:
+            expected_restarts = 1 if args.recovery and slot == "test-1" else 0
+            if item["state"] != "LIVE" or item["restart_count"] != expected_restarts:
                 return 1
             minimum = 30 if slot == "test-0" else 60
             if item["decoded_frames"] < minimum:
