@@ -46,6 +46,7 @@ class RendererController:
         self.rotation_tasks: dict[str, asyncio.Task[None]] = {}
         self.rotation_cursors: dict[str, RotationCursor] = defaultdict(RotationCursor)
         self.rotation_paused: set[str] = set()
+        self.rotation_failures: dict[str, int] = {}
         self.focused = False
         self.focus_restore_task: asyncio.Task[None] | None = None
         self._lock = asyncio.Lock()
@@ -213,6 +214,7 @@ class RendererController:
                 except asyncio.CancelledError:
                     raise
                 except Exception:
+                    self.rotation_failures[slot_id] = self.rotation_failures.get(slot_id, 0) + 1
                     LOGGER.exception(
                         "Rotation step failed; the group will retry on its next interval",
                         extra={"slot_id": slot_id, "rotation_group_id": group_id},
@@ -304,6 +306,7 @@ class RendererController:
                 cursor.index = previous_index
                 raise
             self.current_specs[slot_id] = replacement
+            self.rotation_failures.pop(slot_id, None)
             return self.status()
 
     async def focus_camera(
@@ -365,6 +368,7 @@ class RendererController:
 
     def resume_rotation(self, group_id: str) -> None:
         self.rotation_paused.discard(group_id)
+        self.rotation_failures.clear()
 
     def restart_stream(self, slot_id: str) -> dict[str, Any]:
         self.backend.restart_stream(slot_id)
@@ -372,6 +376,11 @@ class RendererController:
 
     def status(self) -> dict[str, Any]:
         status = self.backend.health()
+        for slot_id, failures in self.rotation_failures.items():
+            stream = status.get("streams", {}).get(slot_id)
+            if stream and stream.get("state") == "LIVE" and failures >= 2:
+                stream["state"] = "DEGRADED"
+                stream["detail"] = f"Rotation stalled: {failures} scheduled changes missed; active camera is still playing"
         status.update(
             {
                 "active_layout_id": self.active_layout_id,
@@ -396,6 +405,7 @@ class RendererController:
         for task in self.rotation_tasks.values():
             task.cancel()
         self.rotation_tasks.clear()
+        self.rotation_failures.clear()
 
     async def shutdown(self) -> None:
         self._cancel_focus_restore()

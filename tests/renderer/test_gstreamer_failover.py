@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from types import SimpleNamespace
 
-from mosaivue.renderer.base import HealthState
+from mosaivue.renderer.base import HealthState, Rect, StreamSpec
 from mosaivue.renderer.gstreamer import GStreamerRenderer
 
 
@@ -22,6 +22,24 @@ def test_failed_rotation_source_uses_warm_camera_without_reconnect() -> None:
     assert renderer._request_failover("rotation") is True
     assert renderer._request_failover("rotation") is True
     assert requested == ["rotation"]
+
+
+def test_rtsps_source_uses_tcp_and_stable_jitter_buffer() -> None:
+    renderer = object.__new__(GStreamerRenderer)
+    properties = {}
+    source = SimpleNamespace(
+        find_property=lambda name: True,
+        set_property=lambda name, value: properties.__setitem__(name, value),
+    )
+    spec = StreamSpec(
+        slot_id="rotation", camera_id="se", camera_name="SE",
+        url="rtsps://camera.example/live", rect=Rect(0, 0, 640, 360),
+        latency_profile="stable", transport="udp",
+    )
+
+    renderer._configure_rtsp_source(source, spec)
+
+    assert properties == {"latency": 800, "drop-on-latency": False, "protocols": 4}
 
 
 def test_unready_rotation_source_stays_responsive_then_restarts_service(monkeypatch, tmp_path) -> None:

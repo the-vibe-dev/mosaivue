@@ -126,8 +126,9 @@ class GStreamerRenderer(RendererBackend):
             return RendererCapabilities(name="gstreamer", available=False, reason=str(exc))
         required = [
             "compositor",
-            "uridecodebin",
+            "decodebin",
             "rtspsrc",
+            "rtph264depay",
             "videotestsrc",
             "input-selector",
             "queue",
@@ -396,15 +397,10 @@ class GStreamerRenderer(RendererBackend):
         assert self._pipeline is not None
         self._branch_sequence += 1
         name = f"{runtime.spec.slot_id}-{self._branch_sequence}"
-        source = Gst.ElementFactory.make("uridecodebin", f"source-{name}")
         source_queue = Gst.ElementFactory.make("queue", f"source-queue-{name}")
-        if not source or not source_queue:
+        if not source_queue:
             raise RuntimeError("Unable to create RTSP source branch")
-        source.set_property("uri", runtime.spec.url)
-        if source.find_property("use-buffering"):
-            source.set_property("use-buffering", False)
-        source.connect("pad-added", self._on_source_pad_added, runtime.spec.slot_id, source_queue)
-        source.connect("source-setup", self._on_source_setup, runtime.spec.slot_id)
+        source = self._new_video_source(runtime.spec, name, source_queue)
         source_queue.set_property("leaky", 2)
         source_queue.set_property("max-size-buffers", 2)
         self._pipeline.add(source)
@@ -445,15 +441,10 @@ class GStreamerRenderer(RendererBackend):
         Gst = self.Gst
         self._branch_sequence += 1
         name = f"{slot_id}-{self._branch_sequence}"
-        source = Gst.ElementFactory.make("uridecodebin", f"prepared-source-{name}")
         queue = Gst.ElementFactory.make("queue", f"prepared-queue-{name}")
-        if not source or not queue:
+        if not queue:
             raise RuntimeError("Unable to create prepared RTSP branch")
-        source.set_property("uri", spec.url)
-        if source.find_property("use-buffering"):
-            source.set_property("use-buffering", False)
-        source.connect("pad-added", self._on_source_pad_added, slot_id, queue)
-        source.connect("source-setup", self._on_source_setup, slot_id, spec)
+        source = self._new_video_source(spec, f"prepared-{name}", queue)
         queue.set_property("leaky", 2)
         queue.set_property("max-size-buffers", 2)
         source_added = self._pipeline.add(source)
@@ -507,11 +498,7 @@ class GStreamerRenderer(RendererBackend):
             self._pipeline.remove(element)
         runtime.selector.release_request_pad(prepared.selector_pad)
 
-    def _on_source_setup(self, _: Any, source: Any, slot_id: str, prepared_spec: StreamSpec | None = None) -> None:
-        runtime = self._slots.get(slot_id)
-        if not runtime:
-            return
-        spec = prepared_spec or runtime.spec
+    def _configure_rtsp_source(self, source: Any, spec: StreamSpec) -> None:
         latency_map = {"ultra-low": 50, "low": 120, "normal": 300, "stable": 800}
         if source.find_property("latency"):
             source.set_property("latency", latency_map.get(spec.latency_profile, 120))
@@ -523,6 +510,74 @@ class GStreamerRenderer(RendererBackend):
                 source.set_property("protocols", 4)
             elif spec.transport == "udp":
                 source.set_property("protocols", 1)
+
+    def _new_video_source(self, spec: StreamSpec, name: str, queue: Any) -> Any:
+        Gst = self.Gst
+        if urlsplit(spec.url).scheme.lower() not in {"rtsp", "rtsps"}:
+            raise ValueError("GStreamer camera sources must use RTSP or RTSPS")
+        source = Gst.Bin.new(f"{name}-source")
+        rtsp = Gst.ElementFactory.make("rtspsrc", f"{name}-rtsp")
+        decoder = Gst.ElementFactory.make("decodebin", f"{name}-decode")
+        if source is None or rtsp is None or decoder is None:
+            raise RuntimeError("Unable to create RTSP video source")
+        rtsp.set_property("location", spec.url)
+        self._configure_rtsp_source(rtsp, spec)
+        source.add(rtsp)
+        source.add(decoder)
+        rtsp.connect("pad-added", self._on_rtp_pad_added, spec.slot_id, source, decoder)
+        decoder.connect("pad-added", self._on_decoded_video_pad, spec.slot_id, source, queue)
+        decoder.connect("pad-removed", self._on_decoded_video_pad_removed, source)
+        return source
+
+    def _on_decoded_video_pad(self, _: Any, pad: Any, slot_id: str, source: Any, queue: Any) -> None:
+        caps = pad.get_current_caps() or pad.query_caps(None)
+        if not caps or not caps.to_string().startswith("video/"):
+            return
+        existing = source.get_static_pad("src")
+        if existing:
+            if not existing.set_target(pad):
+                LOGGER.warning("Could not relink decoded video for slot %s", slot_id)
+            return
+        ghost = self.Gst.GhostPad.new("src", pad)
+        ghost.set_active(True)
+        if source.add_pad(ghost):
+            self._on_source_pad_added(source, ghost, slot_id, queue)
+
+    def _on_decoded_video_pad_removed(self, _: Any, pad: Any, source: Any) -> None:
+        ghost = source.get_static_pad("src")
+        if ghost and ghost.get_target() == pad:
+            ghost.set_target(None)
+
+    def _on_rtp_pad_added(self, _: Any, pad: Any, slot_id: str, source: Any, decoder: Any) -> None:
+        caps = pad.get_current_caps() or pad.query_caps(None)
+        structure = caps.get_structure(0) if caps and caps.get_size() else None
+        if structure is None or structure.get_string("media") != "video":
+            return
+        decoder_sink = decoder.get_static_pad("sink")
+        if decoder_sink.is_linked():
+            peer = decoder_sink.get_peer()
+            depay = peer.get_parent_element() if peer else None
+            depay_sink = depay.get_static_pad("sink") if depay else None
+            if depay_sink and not depay_sink.is_linked():
+                result = pad.link(depay_sink)
+                if result != self.Gst.PadLinkReturn.OK:
+                    LOGGER.warning("Could not reconnect RTSP video for slot %s: %s", slot_id, result)
+            return
+        encoding = (structure.get_string("encoding-name") or "").upper()
+        depay_factory = {"H264": "rtph264depay", "H265": "rtph265depay", "JPEG": "rtpjpegdepay"}.get(encoding)
+        if depay_factory is None:
+            LOGGER.warning("Unsupported RTSP video encoding %s for slot %s", encoding, slot_id)
+            return
+        depay = self.Gst.ElementFactory.make(depay_factory)
+        if depay is None or not source.add(depay):
+            LOGGER.warning("Could not create RTSP depayloader for slot %s", slot_id)
+            return
+        if not depay.link(decoder) or pad.link(depay.get_static_pad("sink")) != self.Gst.PadLinkReturn.OK:
+            LOGGER.warning("Could not link RTSP video for slot %s", slot_id)
+            depay.set_state(self.Gst.State.NULL)
+            source.remove(depay)
+            return
+        depay.sync_state_with_parent()
 
     def _on_source_pad_added(self, _: Any, pad: Any, slot_id: str, branch_queue: Any | None = None) -> None:
         runtime = self._slots.get(slot_id)

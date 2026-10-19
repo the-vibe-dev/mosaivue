@@ -44,11 +44,12 @@ export async function dashboardPage(): Promise<void> {
     const streams = Object.values(status.renderer.streams ?? {});
     const live = streams.filter((item) => item.state === 'LIVE').length;
     const failed = streams.filter((item) => !['LIVE', 'CONNECTING'].includes(item.state)).length;
+    const displayHealthy = status.renderer.state === 'RUNNING' && failed === 0;
     root.innerHTML = `
       ${pageHeader('Dashboard', 'Live health and appliance overview', `<a class="button button-primary" href="/layouts" data-route>${icon('layout')} Open layouts</a>`)}
       <section class="dashboard-hero">
         <div class="hero-copy">
-          <div class="eyeline"><span class="live-pulse ${status.renderer.state === 'RUNNING' ? '' : 'needs-attention'}"></span>${status.renderer.state === 'RUNNING' ? 'Display online' : 'Renderer attention needed'}</div>
+          <div class="eyeline"><span class="live-pulse ${displayHealthy ? '' : 'needs-attention'}"></span>${displayHealthy ? 'Display online' : 'Renderer attention needed'}</div>
           <h2>${escapeHtml(active?.name ?? 'No layout active')}</h2>
           <p>${active ? `${active.revision?.data.slots.length ?? 0} display slots · revision ${active.current_revision}` : 'Create a layout and apply it to the HDMI display.'}</p>
           <div class="hero-actions">
@@ -67,7 +68,7 @@ export async function dashboardPage(): Promise<void> {
         </div>
       </section>
       <section class="metric-strip">
-        <article><span>Live streams</span><strong>${live}<small> / ${streams.length}</small></strong><em>${!streams.length ? 'No streams running' : failed ? `${failed} need attention` : 'All healthy'}</em></article>
+        <article><span>Healthy streams</span><strong>${live}<small> / ${streams.length}</small></strong><em>${!streams.length ? 'No streams running' : failed ? `${failed} need attention` : 'All healthy'}</em></article>
         <article><span>CPU load</span><strong>${status.metrics.cpu_percent.toFixed(0)}<small>%</small></strong><em>${status.metrics.cpu_temperature_c != null ? `${status.metrics.cpu_temperature_c.toFixed(1)}°C` : 'temperature unavailable'}</em></article>
         <article><span>Memory</span><strong>${status.metrics.memory.percent.toFixed(0)}<small>%</small></strong><em>${formatBytes(status.metrics.memory.used_bytes)} used</em></article>
         <article><span>Renderer</span><strong class="metric-word">${escapeHtml(status.renderer.backend ?? 'offline')}</strong><em>${escapeHtml(status.renderer.sink ?? status.renderer.state)}</em></article>

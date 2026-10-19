@@ -107,7 +107,12 @@ async def test_sequential_rotation_activates_prepared_source(
     controller.active_layout_id = layout.id
     controller.active_revision = 1
     await controller.rotate("slot", prepare_only=True)
+    controller.rotation_failures["slot"] = 2
+    assert controller.status()["streams"]["slot"]["state"] == "DEGRADED"
+    assert "Rotation stalled" in controller.status()["streams"]["slot"]["detail"]
+    assert backend.health()["streams"]["slot"]["state"] == "LIVE"
     await controller.rotate("slot")
     assert calls == [("prepare", second.id), ("activate", second.id)]
     assert backend.streams["slot"].camera_id == second.id
+    assert controller.status()["streams"]["slot"]["state"] == "LIVE"
     await controller.shutdown()
