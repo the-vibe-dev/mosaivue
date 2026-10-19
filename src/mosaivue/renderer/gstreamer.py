@@ -3,6 +3,7 @@ from __future__ import annotations
 import concurrent.futures
 import logging
 import os
+import re
 import threading
 import time
 from collections.abc import Callable
@@ -1008,17 +1009,29 @@ class GStreamerRenderer(RendererBackend):
             slot_id = self._slot_for_element(message.src)
             if slot_id and self._is_retired_message(message.src, slot_id):
                 return
+            if slot_id and self._is_placeholder_message(message.src, slot_id):
+                LOGGER.debug("Ignoring inactive placeholder message for slot %s", slot_id)
+                return
         if message.type == self.Gst.MessageType.ERROR:
             error, debug = message.parse_error()
             slot_id = self._slot_for_element(message.src)
+            factory = message.src.get_factory() if hasattr(message.src, "get_factory") else None
+            origin = factory.get_name() if factory else type(message.src).__name__
+            match = re.search(r"reason [a-zA-Z_-]+ \(-?\d+\)", debug or "")
+            reason = match.group(0) if match else "unknown"
             if slot_id:
                 if self._is_prepared_message(message.src, slot_id):
-                    LOGGER.warning("Prepared GStreamer stream error for slot %s: %s", slot_id, error.message)
+                    LOGGER.warning(
+                        "Prepared GStreamer stream error for slot %s from %s (%s): %s",
+                        slot_id, origin, reason, error.message,
+                    )
                     self._mark_prepared_unavailable(slot_id)
                     return
                 LOGGER.warning(
-                    "GStreamer stream error for slot %s: %s",
+                    "GStreamer stream error for slot %s from %s (%s): %s",
                     slot_id,
+                    origin,
+                    reason,
                     error.message,
                     extra={"slot_id": slot_id},
                 )
@@ -1156,6 +1169,19 @@ class GStreamerRenderer(RendererBackend):
         while current is not None:
             try:
                 if current in retired:
+                    return True
+                current = current.get_parent()
+            except Exception:
+                break
+        return False
+
+    def _is_placeholder_message(self, element: Any, slot_id: str) -> bool:
+        runtime = self._slots.get(slot_id)
+        placeholder = runtime.placeholder_source if runtime else None
+        current = element
+        while current is not None and placeholder is not None:
+            try:
+                if current == placeholder:
                     return True
                 current = current.get_parent()
             except Exception:

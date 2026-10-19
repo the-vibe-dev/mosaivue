@@ -40,6 +40,7 @@ def main() -> int:
     parser.add_argument("--seconds", type=int, default=15)
     parser.add_argument("--sink", choices=("kmssink", "fakesink"), default="kmssink")
     parser.add_argument("--recovery", action="store_true", help="exercise fixed and prepared source resets")
+    parser.add_argument("--force-fresh", action="store_true", help="exercise prepared branch replacement")
     args = parser.parse_args()
     if args.seconds < 15:
         parser.error("--seconds must be at least 15")
@@ -70,7 +71,18 @@ def main() -> int:
         renderer.prepare_stream("test-0", spec(0, url_index=1))
         time.sleep(5)
         before = renderer.health()
-        if args.recovery:
+        if args.force_fresh:
+            def force_refresh() -> None:
+                prepared = renderer._slots["test-0"].prepared
+                assert prepared is not None
+                prepared.restarting = True
+                prepared.ready = False
+                prepared.last_frame_monotonic = None
+                renderer._schedule_prepared_refresh("test-0", prepared)
+
+            renderer._call(force_refresh)
+            time.sleep(9)
+        elif args.recovery:
             renderer._call(renderer._mark_prepared_unavailable, "test-0")
             time.sleep(6)
         renderer.activate_prepared_stream("test-0", spec(0, url_index=1))

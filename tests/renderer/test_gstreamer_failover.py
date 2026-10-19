@@ -142,6 +142,20 @@ def test_prepared_failure_recycles_renderer_once_per_cooldown(monkeypatch, tmp_p
     assert (tmp_path / "rotation-recovery.stamp").exists()
 
 
+def test_inactive_placeholder_error_is_not_treated_as_camera_failure() -> None:
+    renderer = object.__new__(GStreamerRenderer)
+    placeholder = SimpleNamespace(get_name=lambda: "placeholder-rotation", get_parent=lambda: None)
+    renderer._slots = {"rotation": SimpleNamespace(placeholder_source=placeholder)}
+    renderer.Gst = SimpleNamespace(
+        MessageType=SimpleNamespace(ERROR=1, WARNING=2, EOS=3)
+    )
+    renderer._is_retired_message = lambda *_: False
+    renderer._mark_offline = lambda *_: (_ for _ in ()).throw(AssertionError("camera marked offline"))
+    message = SimpleNamespace(type=renderer.Gst.MessageType.ERROR, src=placeholder)
+
+    renderer._on_bus_message(None, message)
+
+
 def test_fixed_camera_restarts_source_without_blocking_video_loop() -> None:
     calls: list[str] = []
 

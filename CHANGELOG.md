@@ -11,6 +11,7 @@ All notable changes follow a Keep a Changelog-style format. Version numbers use 
 - Failed prepared and fixed GStreamer sources reset on a GStreamer worker thread, so a blocked RTSP shutdown cannot stall the shared video loop. If that reset does not produce frames, a fresh source branch is opened without waiting for the failed branch to stop.
 - If both rotation feeds remain without frames after recovery, the renderer process exits for its systemd restart instead of leaving a frozen tile marked LIVE.
 - If only the standby feed remains unavailable after two fresh connection attempts, the renderer recycles once and then keeps the working feed visible for at least five minutes before another full restart.
+- Negotiation errors from a slot's black placeholder are excluded from camera failure handling, preventing false failovers and decoder resets.
 - The Rock Pi camera profiles that needed more RTSP jitter tolerance can use the `stable` latency preset.
 
 ## [0.1.0b1] - 2026-10-07

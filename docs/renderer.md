@@ -104,6 +104,9 @@ After two unsuccessful standby branch replacements, the renderer restarts once
 to clear the decoder pipeline. A five-minute cooldown prevents an offline
 standby camera from repeatedly restarting the whole wall; the working camera
 stays visible during that cooldown.
+The black placeholder has its own source branch. Its negotiation messages are
+ignored by camera recovery, since a placeholder error does not establish that
+the RTSP camera failed.
 If both rotation sources stop producing frames, the slot reports STALLED. The
 renderer gives the prepared source fifteen seconds to recover, then exits so
 systemd can restart the pipeline. This fallback briefly interrupts the wall
