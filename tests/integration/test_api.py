@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from importlib import import_module
 from pathlib import Path
+import threading
+import time
 
 from fastapi.testclient import TestClient
 
@@ -10,6 +13,29 @@ from mosaivue.api.app import create_app
 from mosaivue.constants import SETUP_TOKEN_PATH
 from mosaivue.db import Base, configure_database
 from mosaivue.security import generate_setup_token
+
+
+def test_health_is_ready_while_capability_scan_runs(tmp_path: Path, monkeypatch) -> None:
+    engine = configure_database(tmp_path / "startup.db")
+    Base.metadata.create_all(engine)
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_scan() -> None:
+        started.set()
+        release.wait(timeout=3)
+
+    monkeypatch.setattr(import_module("mosaivue.api.app"), "write_capabilities", slow_scan)
+    before = time.monotonic()
+    with TestClient(create_app()) as client:
+        try:
+            assert time.monotonic() - before < 1.5
+            assert started.wait(timeout=1)
+            assert client.get("/healthz").json() == {"status": "ok"}
+        finally:
+            release.set()
+    Base.metadata.drop_all(engine)
+    engine.dispose()
 
 
 def test_authenticated_camera_and_layout_workflow(tmp_path: Path) -> None:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import AsyncIterator
 
@@ -51,11 +51,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         LOGGER.warning("Initial setup is required; the one-time token is stored at %s", SETUP_TOKEN_PATH)
     app.state.events = EventBus()
     app.state.renderer = RendererRPCClient()
+
+    async def refresh_capabilities() -> None:
+        try:
+            await asyncio.to_thread(write_capabilities)
+        except Exception:
+            LOGGER.exception("Unable to write initial capabilities report")
+
+    # The installer already saved a capability report. Probing every GStreamer
+    # plugin again can take over a minute on a Pi 3, so serve HTTP first.
+    refresh_task = asyncio.create_task(refresh_capabilities())
     try:
-        await asyncio.to_thread(write_capabilities)
-    except Exception:
-        LOGGER.exception("Unable to write initial capabilities report")
-    yield
+        yield
+    finally:
+        refresh_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await refresh_task
 
 
 def create_app() -> FastAPI:
