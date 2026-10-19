@@ -96,3 +96,30 @@ def test_failed_preparation_keeps_current_camera_visible(monkeypatch) -> None:
 
     assert renderer._players["slot-1"] is old
     assert stopped == []
+
+
+@pytest.mark.parametrize("seconds_since_confirmation,should_restart", [(2, False), (31, True)])
+def test_monitor_requires_30_seconds_without_playback_confirmation(
+    monkeypatch, seconds_since_confirmation: int, should_restart: bool,
+) -> None:
+    renderer = OmxPlayerRenderer()
+    now = 1000.0
+    health = StreamHealth("slot-1", "camera-1", state=HealthState.live)
+    health.last_frame_monotonic = now - seconds_since_confirmation
+    player = _Player(_spec("rtsp://camera.example/live", "cover"), SimpleNamespace(poll=lambda: None), health, now - 100, "player")
+    renderer._players["slot-1"] = player
+    waits = iter((False, True))
+    renderer._stop = SimpleNamespace(wait=lambda _: next(waits))
+    monkeypatch.setattr("mosaivue.renderer.omxplayer.time.monotonic", lambda: now)
+    monkeypatch.setattr(renderer, "_playback_status", lambda _: False)
+    stopped = []
+    restarted = []
+    monkeypatch.setattr(renderer, "_stop_player", stopped.append)
+    monkeypatch.setattr(renderer, "_start", lambda spec, **kwargs: restarted.append(kwargs) or player)
+
+    renderer._watch()
+
+    assert bool(stopped) is should_restart
+    assert bool(restarted) is should_restart
+    if should_restart:
+        assert restarted[0]["last_restart_reason"] == "Playback unconfirmed for 30 seconds"

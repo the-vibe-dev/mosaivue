@@ -345,7 +345,7 @@ class OmxPlayerRenderer(RendererBackend):
                         player.health.state = HealthState.live
                         player.health.detail = "Playback confirmed by OMXPlayer"
                         player.health.last_frame_monotonic = time.monotonic()
-                    elif time.monotonic() - player.started > 30:
+                    elif time.monotonic() - (player.health.last_frame_monotonic or player.started) > 30:
                         player.health.state = HealthState.degraded
                         player.health.detail = "Playback not confirmed; restarting player"
                         count = player.health.restart_count + 1
