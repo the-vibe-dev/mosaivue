@@ -1,10 +1,10 @@
 # Hardware test plan
 
-Run the legacy OMXPlayer path on a supported Pi 3 image, the GStreamer path
-on Pi 4 and Pi 5 with current 64-bit Raspberry Pi OS Lite, and an experimental
-GStreamer pass on ROCK Pi 4+ when hardware is available. The one-site Pi 3B+
-beta result is recorded in [beta notes](beta-release.md); it does not replace
-this matrix.
+Run the legacy OMXPlayer path on a supported Pi 3 image and the GStreamer path
+on Pi 4 and Pi 5 with current 64-bit Raspberry Pi OS Lite. The ROCK Pi 4B+
+has passed the short synthetic GStreamer test in [beta notes](beta-release.md);
+long-run and real-camera tests are still needed. The one-site Pi 3B+ result
+also does not replace this matrix.
 
 ## Baseline
 

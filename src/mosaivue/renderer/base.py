@@ -83,6 +83,9 @@ class RendererCapabilities:
 
 
 class RendererBackend(ABC):
+    def start_playback(self) -> None:
+        """Start output after the initial layout has linked its streams."""
+
     def prepare_stream(self, slot_id: str, spec: StreamSpec) -> None:
         """Optionally prepare a replacement while the current stream remains visible."""
 

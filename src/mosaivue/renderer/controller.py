@@ -78,6 +78,8 @@ class RendererController:
             self._cancel_focus_restore()
             self._cancel_rotations()
             self._apply_diff(desired)
+            if desired:
+                self.backend.start_playback()
             self.active_layout_id = layout_id
             self.active_revision = revision_number
             self.focused = False

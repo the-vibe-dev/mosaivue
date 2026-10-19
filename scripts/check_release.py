@@ -27,6 +27,8 @@ REQUIRED = [
     "uninstall.sh",
     "systemd/mosaivue-server.service",
     "systemd/mosaivue-renderer.service",
+    "systemd/mosaivue-rockchip-devices.conf",
+    "scripts/rockpi-smoke.py",
     "src/mosaivue/api/app.py",
     "src/mosaivue/renderer/gstreamer.py",
     "src/mosaivue/static/index.html",

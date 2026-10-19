@@ -46,9 +46,12 @@ async def test_layout_diff_resizes_without_restarting_unaffected_stream(
     )
     db.commit()
     backend = MemoryRenderer()
+    playback_streams: list[tuple[str, ...]] = []
+    backend.start_playback = lambda: playback_streams.append(tuple(backend.streams))
     controller = RendererController(backend, lambda: db, cipher)
     backend.initialize(width=1920, height=1080)
     await controller.apply_layout(layout.id, 1)
+    assert playback_streams == [("slot-a",)]
     assert backend.streams["slot-a"].rect.width == 960
     assert backend.states["slot-a"].restart_count == 0
     revision2 = LayoutRevision(layout_id=layout.id, revision=2, status="draft", data=dict(layout.revisions[0].data))

@@ -203,6 +203,11 @@ sed "s|/opt/mosaivue|$PREFIX|g" "$PREFIX/current/systemd/mosaivue-server.service
 sed "s|/opt/mosaivue|$PREFIX|g" "$PREFIX/current/systemd/mosaivue-renderer.service" >/etc/systemd/system/mosaivue-renderer.service
 install -m 0644 "$PREFIX/current/systemd/mosaivue.target" /etc/systemd/system/mosaivue.target
 chmod 0644 /etc/systemd/system/mosaivue-server.service /etc/systemd/system/mosaivue-renderer.service
+if [[ -e /dev/mpp_service ]]; then
+  install -d -m 0755 /etc/systemd/system/mosaivue-renderer.service.d
+  install -m 0644 "$PREFIX/current/systemd/mosaivue-rockchip-devices.conf" \
+    /etc/systemd/system/mosaivue-renderer.service.d/rockchip-devices.conf
+fi
 install -m 0644 "$PREFIX/current/systemd/mosaivue.tmpfiles.conf" /usr/lib/tmpfiles.d/mosaivue.conf
 systemd-tmpfiles --create /usr/lib/tmpfiles.d/mosaivue.conf || true
 systemctl daemon-reload
@@ -244,4 +249,6 @@ printf '  Setup token:  %s\n' "$TOKEN"
 printf '  Terminal UI:  sudo -u mosaivue mosaivue tui\n'
 printf '  Diagnostics:  mosaivue doctor\n\n'
 printf 'The web service is explicitly bound to %s. Restrict it with a firewall or change /etc/mosaivue/config.json when LAN access is not desired.\n' "$BIND_ADDRESS"
-[[ -n "$PREVIOUS_TARGET" && "$PREVIOUS_TARGET" != "$RELEASE_DIR" ]] && printf 'Previous release retained at %s for rollback.\n' "$PREVIOUS_TARGET"
+if [[ -n "$PREVIOUS_TARGET" && "$PREVIOUS_TARGET" != "$RELEASE_DIR" ]]; then
+  printf 'Previous release retained at %s for rollback.\n' "$PREVIOUS_TARGET"
+fi

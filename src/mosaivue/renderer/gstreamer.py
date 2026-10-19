@@ -86,6 +86,7 @@ class GStreamerRenderer(RendererBackend):
         self._started_at: float | None = None
         self._bus_watch_id: int | None = None
         self._watchdog_source_id: int | None = None
+        self._playing = False
 
     @classmethod
     def detect(cls) -> RendererCapabilities:
@@ -115,7 +116,7 @@ class GStreamerRenderer(RendererBackend):
         ]
         decoders = [
             name
-            for name in ("v4l2h264dec", "v4l2h265dec", "omxh264dec", "avdec_h264", "avdec_h265")
+            for name in ("v4l2h264dec", "v4l2h265dec", "omxh264dec", "mppvideodec", "avdec_h264", "avdec_h265")
             if Gst.ElementFactory.find(name)
         ]
         return RendererCapabilities(
@@ -128,7 +129,7 @@ class GStreamerRenderer(RendererBackend):
             dynamic_source_replace=True,
             per_stream_recovery=True,
             snapshots=False,
-            hardware_decode=any(name.startswith(("v4l2", "omx")) for name in decoders),
+            hardware_decode=any(name.startswith(("v4l2", "omx", "mpp")) for name in decoders),
         )
 
     def capabilities(self) -> RendererCapabilities:
@@ -192,9 +193,20 @@ class GStreamerRenderer(RendererBackend):
         self._output_caps = output_caps
         self._started_at = time.monotonic()
         self._watchdog_source_id = self.GLib.timeout_add_seconds(2, self._watchdog_tick)
-        result = pipeline.set_state(Gst.State.PLAYING)
-        if result == Gst.StateChangeReturn.FAILURE:
+        # Link the initial layout before KMS enters PLAYING. On some DRM
+        # drivers, adding the first compositor pad to an already-playing empty
+        # pipeline leaves the sink showing one frame and blocks upstream.
+
+    def start_playback(self) -> None:
+        self._call(self._start_playback)
+
+    def _start_playback(self) -> None:
+        if self._playing or self._pipeline is None:
+            return
+        result = self._pipeline.set_state(self.Gst.State.PLAYING)
+        if result == self.Gst.StateChangeReturn.FAILURE:
             raise RuntimeError("GStreamer output pipeline refused PLAYING state")
+        self._playing = True
 
     def set_output_size(self, width: int, height: int) -> None:
         self._call(self._set_output_size, width, height)
@@ -645,7 +657,7 @@ class GStreamerRenderer(RendererBackend):
     def _health_snapshot(self) -> dict[str, Any]:
         return {
             "backend": "gstreamer",
-            "state": "RUNNING" if self._pipeline is not None else "STOPPED",
+            "state": "RUNNING" if self._playing else "READY" if self._pipeline is not None else "STOPPED",
             "sink": self._sink.get_factory().get_name() if self._sink else None,
             "output": {"width": self._output_width, "height": self._output_height},
             "uptime_seconds": time.monotonic() - self._started_at if self._started_at else 0,
@@ -769,10 +781,11 @@ class GStreamerRenderer(RendererBackend):
         if self._watchdog_source_id:
             self.GLib.source_remove(self._watchdog_source_id)
             self._watchdog_source_id = None
-        for slot_id in list(self._slots):
-            self._remove_stream(slot_id)
         if self._pipeline:
             self._pipeline.set_state(self.Gst.State.NULL)
+            self._playing = False
+            self._slots.clear()
+            self._health.clear()
             self._pipeline = None
             self._compositor = None
             self._sink = None

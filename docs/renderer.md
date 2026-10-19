@@ -35,6 +35,9 @@ placeholder source ────────────────────�
 ```
 
 Each slot is represented by an independent branch. The compositor and output sink are shared. A failed source can switch to its placeholder, reconnect, and return without rebuilding unrelated branches.
+The first layout is linked before the pipeline enters `PLAYING`. This is
+required for reliable startup with `kmssink` on the tested ROCK Pi 4B+.
+Rockchip's `mppvideodec` is reported as a hardware decoder when installed.
 
 ## Sink selection
 

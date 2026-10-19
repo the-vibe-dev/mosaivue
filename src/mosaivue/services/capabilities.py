@@ -93,6 +93,7 @@ def gstreamer_plugins() -> dict[str, bool]:
         "v4l2h264dec",
         "v4l2h265dec",
         "omxh264dec",
+        "mppvideodec",
         "avdec_h264",
         "avdec_h265",
         "compositor",
@@ -147,7 +148,7 @@ def detect_capabilities() -> dict[str, Any]:
     architecture = platform.machine()
     decoders = [
         name
-        for name in ("v4l2h264dec", "v4l2h265dec", "omxh264dec", "avdec_h264", "avdec_h265")
+        for name in ("v4l2h264dec", "v4l2h265dec", "omxh264dec", "mppvideodec", "avdec_h264", "avdec_h265")
         if plugins.get(name)
     ]
     sinks = [name for name in ("kmssink", "waylandsink", "ximagesink", "fbdevsink") if plugins.get(name)]

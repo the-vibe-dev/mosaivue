@@ -49,6 +49,29 @@ Restart `mosaivue-server.service` after changing bind settings.
 
 The renderer does not require a desktop. A GStreamer KMS sink needs `/dev/dri/card*` and suitable `video`/`render` group access. Legacy OMXPlayer uses Raspberry Pi VideoCore HDMI overlays and `/dev/vchiq`; absence of DRM connectors is expected on that path. VLC is not needed by either supported renderer.
 
+On a ROCK Pi 4B+ with the Rockchip MPP plugin, the installer adds access to
+`/dev/mpp_service`, `/dev/rga`, and the video-owned DMA heaps. Select
+`gstreamer` with the `kmssink` sink. If GDM or another desktop compositor owns
+the HDMI connector, stop its display-manager service before starting the
+Mosaivue renderer; a local desktop cannot share DRM master with `kmssink`.
+
+On the tested Debian 12 arm64 image, `mppvideodec` and `kmssink` were available.
+After configuring the backend, a short local H.264/KMS test can check the
+renderer without camera credentials or database changes:
+
+```bash
+sudo apt-get install -y gir1.2-gst-rtsp-server-1.0
+sudo systemctl stop mosaivue-renderer.service
+sudo -u mosaivue /opt/mosaivue/current/.venv/bin/python \
+  /opt/mosaivue/current/scripts/rockpi-smoke.py --streams 4 --seconds 15
+sudo systemctl start mosaivue-renderer.service
+```
+
+The smoke test uses four local 640×360 H.264 sources, 1280×720 KMS output,
+and one source replacement. A pass does not establish the capacity or
+reliability of a particular camera network. Confirm the monitor image and
+test the intended camera mix and rotation interval separately.
+
 ```bash
 id mosaivue
 ls -l /dev/dri
