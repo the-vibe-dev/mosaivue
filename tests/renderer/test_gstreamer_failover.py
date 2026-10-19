@@ -26,11 +26,17 @@ def test_failed_rotation_source_uses_warm_camera_without_reconnect() -> None:
 
 def test_unready_rotation_source_stays_responsive_then_restarts_service(monkeypatch, tmp_path) -> None:
     renderer = object.__new__(GStreamerRenderer)
+    selected = []
+    placeholder = object()
     renderer._slots = {
         "rotation": SimpleNamespace(
             prepared=SimpleNamespace(ready=False, last_frame_monotonic=None),
             failover_pending=False,
             recovery_source_id=None,
+            selector=SimpleNamespace(set_property=lambda key, value: selected.append((key, value))),
+            selector_placeholder_pad=placeholder,
+            placeholder_text=SimpleNamespace(set_property=lambda *_: None),
+            spec=SimpleNamespace(camera_name="Garage Inside"),
         )
     }
     renderer._failure_callback = lambda _: None
@@ -44,6 +50,7 @@ def test_unready_rotation_source_stays_responsive_then_restarts_service(monkeypa
 
     assert renderer._request_failover("rotation") is True
     assert health.state == HealthState.stalled
+    assert selected == [("active-pad", placeholder)]
     assert len(scheduled) == 1
     scheduled[0]()
     assert exits == [75]
@@ -109,7 +116,10 @@ def test_unready_prepared_branch_gets_fresh_source_without_blocking_teardown() -
     renderer = object.__new__(GStreamerRenderer)
     old_source = object()
     spec = SimpleNamespace(camera_id="garage")
-    prepared = SimpleNamespace(source=old_source, spec=spec, ready=False, last_frame_monotonic=None)
+    prepared = SimpleNamespace(
+        source=old_source, queue=object(), selector_pad=object(), frame_probe_id=1,
+        spec=spec, ready=False, last_frame_monotonic=None,
+    )
     runtime = SimpleNamespace(
         prepared=prepared,
         prepared_refresh_source_id=None,
@@ -120,6 +130,7 @@ def test_unready_prepared_branch_gets_fresh_source_without_blocking_teardown() -
     renderer.GLib = SimpleNamespace(timeout_add_seconds=lambda _, callback: scheduled.append(callback) or 1)
     reopened = []
     renderer._prepare_stream = lambda slot_id, replacement: reopened.append((slot_id, replacement))
+    renderer._retire_branch = lambda runtime, source, *_: runtime.retired_sources.append(source)
 
     renderer._schedule_prepared_refresh("rotation", prepared)
     scheduled[0]()
@@ -131,6 +142,7 @@ def test_unready_prepared_branch_gets_fresh_source_without_blocking_teardown() -
 
 def test_prepared_failure_recycles_renderer_once_per_cooldown(monkeypatch, tmp_path) -> None:
     renderer = object.__new__(GStreamerRenderer)
+    renderer._health = {}
     monkeypatch.setenv("MOSAIVUE_DATA_DIR", str(tmp_path))
     exits: list[int] = []
     monkeypatch.setattr("mosaivue.renderer.gstreamer.os._exit", exits.append)
@@ -140,6 +152,21 @@ def test_prepared_failure_recycles_renderer_once_per_cooldown(monkeypatch, tmp_p
 
     assert exits == [75]
     assert (tmp_path / "rotation-recovery.stamp").exists()
+
+
+def test_failed_rotation_keeps_other_live_tiles_running(monkeypatch, tmp_path) -> None:
+    renderer = object.__new__(GStreamerRenderer)
+    renderer._health = {
+        "fixed": SimpleNamespace(state=HealthState.live, last_frame_monotonic=time.monotonic()),
+    }
+    monkeypatch.setenv("MOSAIVUE_DATA_DIR", str(tmp_path))
+    exits: list[int] = []
+    monkeypatch.setattr("mosaivue.renderer.gstreamer.os._exit", exits.append)
+
+    renderer._restart_renderer_with_cooldown("rotation", "rotation feed failed")
+
+    assert exits == []
+    assert not (tmp_path / "rotation-recovery.stamp").exists()
 
 
 def test_inactive_placeholder_error_is_not_treated_as_camera_failure() -> None:
@@ -214,6 +241,7 @@ def test_fixed_camera_opens_fresh_branch_if_reset_stays_stuck() -> None:
     renderer.GLib = SimpleNamespace(timeout_add_seconds=lambda _, callback: scheduled.append(callback) or 1)
     created = []
     renderer._create_source_branch = created.append
+    renderer._retire_branch = lambda runtime, source, *_: runtime.retired_sources.append(source)
 
     renderer._schedule_source_refresh("fixed", runtime, old_source)
     scheduled[0]()
@@ -222,3 +250,43 @@ def test_fixed_camera_opens_fresh_branch_if_reset_stays_stuck() -> None:
     assert runtime.source is None
     assert runtime.restarting is False
     assert created == [runtime]
+
+
+def test_retired_rtsp_branch_releases_decoder_and_selector_pad_asynchronously() -> None:
+    calls: list[str] = []
+    pending: list[object] = []
+    callbacks = []
+
+    class Source:
+        def call_async(self, callback, data) -> None:
+            calls.append("scheduled")
+            callbacks.append(lambda: callback(self, data))
+
+        def set_state(self, state) -> None:
+            calls.append(f"source:{state}")
+
+    pad = SimpleNamespace(
+        remove_probe=lambda _: calls.append("remove-probe"),
+        unlink=lambda _: calls.append("unlink"),
+    )
+    queue = SimpleNamespace(
+        set_state=lambda state: calls.append(f"queue:{state}"),
+        get_static_pad=lambda _: pad,
+    )
+    selector = SimpleNamespace(release_request_pad=lambda _: calls.append("release-pad"))
+    pipeline = SimpleNamespace(remove=lambda _: calls.append("remove"))
+    renderer = object.__new__(GStreamerRenderer)
+    renderer.Gst = SimpleNamespace(State=SimpleNamespace(NULL="NULL"))
+    renderer.GLib = SimpleNamespace(idle_add=lambda callback: pending.append(callback))
+    renderer._pipeline = pipeline
+    runtime = SimpleNamespace(retired_sources=[], selector=selector)
+    source = Source()
+
+    renderer._retire_branch(runtime, source, queue, object(), 5)
+    assert calls == ["scheduled"]
+    assert runtime.retired_sources == [source]
+    callbacks.pop()()
+    assert calls == ["scheduled", "source:NULL", "queue:NULL"]
+    pending.pop()()
+    assert calls[-4:] == ["unlink", "release-pad", "remove", "remove"]
+    assert runtime.retired_sources == []

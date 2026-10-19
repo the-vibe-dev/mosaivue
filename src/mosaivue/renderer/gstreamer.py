@@ -201,6 +201,10 @@ class GStreamerRenderer(RendererBackend):
         if not all((pipeline, compositor, convert, output_scale, output_caps, sink)):
             raise GStreamerUnavailable("Unable to create the GStreamer output pipeline")
         compositor.set_property("background", "black")
+        if compositor.find_property("ignore-inactive-pads"):
+            compositor.set_property("ignore-inactive-pads", True)
+        if compositor.find_property("min-upstream-latency"):
+            compositor.set_property("min-upstream-latency", 800_000_000)
         if compositor.find_property("latency"):
             compositor.set_property("latency", 100_000_000)
         output_caps.set_property(
@@ -327,6 +331,10 @@ class GStreamerRenderer(RendererBackend):
         ]
         if not all(elements):
             raise RuntimeError("Required GStreamer slot elements are unavailable")
+        # Each RTSP camera has its own live clock. Synchronizing an inactive
+        # selector pad to the active stream can hold its decoder when that
+        # stream pauses, eventually backing up the RTSP source.
+        selector.set_property("sync-streams", False)
         placeholder_source.set_property("is-live", True)
         placeholder_source.set_property("pattern", "black")
         placeholder_caps.set_property(
@@ -878,10 +886,14 @@ class GStreamerRenderer(RendererBackend):
             if health and health.state == HealthState.live and health.last_frame_monotonic and time.monotonic() - health.last_frame_monotonic < 8:
                 return False
             if len(runtime.retired_sources) >= 2:
-                LOGGER.error("Fixed source still unavailable after two fresh branches", extra={"slot_id": slot_id})
+                LOGGER.warning("Waiting for retired fixed camera branches to stop", extra={"slot_id": slot_id})
+                self._schedule_source_refresh(slot_id, runtime, source)
                 return False
             LOGGER.warning("Opening a fresh fixed camera source", extra={"slot_id": slot_id})
-            runtime.retired_sources.append(source)
+            self._retire_branch(
+                runtime, source, runtime.source_queue, runtime.selector_camera_pad,
+                runtime.frame_probe_id,
+            )
             runtime.source = None
             runtime.source_queue = None
             runtime.selector_camera_pad = None
@@ -927,11 +939,17 @@ class GStreamerRenderer(RendererBackend):
         if not prepared.ready or not prepared.last_frame_monotonic or time.monotonic() - prepared.last_frame_monotonic > 8:
             # A rotation branch must never be torn down from the bus callback:
             # GStreamer can block its own main loop while stopping RTSP there.
-            # Keep the wall responsive and retry when the warm branch recovers.
+            # The active RTSP pad has stopped advancing. Select the live
+            # placeholder so input-selector's running time keeps advancing
+            # while the replacement branch is opened.
             health = self._health.get(slot_id)
             if health:
                 health.state = HealthState.stalled
                 health.detail = "Both rotation feeds unavailable; recovery pending"
+            runtime.selector.set_property("active-pad", runtime.selector_placeholder_pad)
+            runtime.placeholder_text.set_property(
+                "text", f"{runtime.spec.camera_name}\nReconnecting…"
+            )
             self._arm_rotation_recovery(slot_id)
             return True
         runtime.failover_pending = True
@@ -1087,11 +1105,15 @@ class GStreamerRenderer(RendererBackend):
             if prepared.ready and prepared.last_frame_monotonic and time.monotonic() - prepared.last_frame_monotonic < 8:
                 return False
             if len(current.retired_sources) >= 2:
-                LOGGER.error("Prepared source still unavailable after two fresh branches", extra={"slot_id": slot_id})
+                LOGGER.warning("Waiting for retired rotation branches to stop", extra={"slot_id": slot_id})
                 self._restart_renderer_with_cooldown(slot_id, "standby source failures")
+                self._schedule_prepared_refresh(slot_id, prepared)
                 return False
             LOGGER.warning("Opening a fresh prepared rotation source", extra={"slot_id": slot_id})
-            current.retired_sources.append(prepared.source)
+            self._retire_branch(
+                current, prepared.source, prepared.queue, prepared.selector_pad,
+                prepared.frame_probe_id,
+            )
             current.prepared = None
             try:
                 self._prepare_stream(slot_id, prepared.spec)
@@ -1101,8 +1123,54 @@ class GStreamerRenderer(RendererBackend):
 
         runtime.prepared_refresh_source_id = self.GLib.timeout_add_seconds(6, refresh)
 
+    def _retire_branch(
+        self, runtime: _SlotRuntime, source: Any, queue: Any, selector_pad: Any,
+        probe_id: int | None,
+    ) -> None:
+        """Stop a failed RTSP branch off the main loop, then release its pads."""
+        assert self._pipeline is not None
+        runtime.retired_sources.append(source)
+
+        def stop(element: Any, _: Any) -> None:
+            try:
+                element.set_state(self.Gst.State.NULL)
+                queue.set_state(self.Gst.State.NULL)
+            except Exception:
+                LOGGER.exception("Could not stop retired camera branch")
+
+            def cleanup() -> bool:
+                try:
+                    if probe_id is not None:
+                        queue.get_static_pad("src").remove_probe(probe_id)
+                    queue.get_static_pad("src").unlink(selector_pad)
+                    runtime.selector.release_request_pad(selector_pad)
+                    self._pipeline.remove(source)
+                    self._pipeline.remove(queue)
+                except Exception:
+                    LOGGER.exception("Could not remove retired camera branch")
+                finally:
+                    if source in runtime.retired_sources:
+                        runtime.retired_sources.remove(source)
+                return False
+
+            self.GLib.idle_add(cleanup)
+
+        source.call_async(stop, None)
+
     def _restart_renderer_with_cooldown(self, slot_id: str, reason: str) -> None:
         """Recycle exhausted decoders once, then avoid repeated wall interruptions."""
+        healthy_others = sum(
+            1 for other_id, health in self._health.items()
+            if other_id != slot_id and health.state == HealthState.live
+            and health.last_frame_monotonic
+            and time.monotonic() - health.last_frame_monotonic < 8
+        )
+        if healthy_others:
+            LOGGER.warning(
+                "Keeping %s other live tiles while %s",
+                healthy_others, reason, extra={"slot_id": slot_id},
+            )
+            return
         marker = Path(os.environ.get("MOSAIVUE_DATA_DIR", "/var/lib/mosaivue")) / "rotation-recovery.stamp"
         now = time.time()
         try:

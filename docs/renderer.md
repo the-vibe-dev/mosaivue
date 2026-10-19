@@ -35,6 +35,9 @@ placeholder source ────────────────────�
 ```
 
 Each slot is represented by an independent branch. The compositor and output sink are shared. A failed source can switch to its placeholder, reconnect, and return without rebuilding unrelated branches.
+Input selectors do not synchronize inactive pads to the active stream. This
+lets standby RTSP decoders keep consuming frames when the displayed source's
+clock pauses; source queues drop old buffers when downstream is slower.
 The first layout is linked before the pipeline enters `PLAYING`. This is
 required for reliable startup with `kmssink` on the tested ROCK Pi 4B+.
 Rockchip's `mppvideodec` is reported as a hardware decoder when installed.
@@ -97,21 +100,23 @@ existing selector branches remain in the pipeline while RTSP reconnects, so
 the other tiles continue to render. A rotation candidate is never selected
 until it has produced a recent decoded frame.
 If a source reset blocks or remains without frames, the renderer opens a new
-source branch and ignores late messages from the retired branch. The number
-of retired branches is bounded so repeated failures cannot grow the pipeline
-without limit.
-After two unsuccessful standby branch replacements, the renderer restarts once
-to clear the decoder pipeline. A five-minute cooldown prevents an offline
-standby camera from repeatedly restarting the whole wall; the working camera
-stays visible during that cooldown.
+source branch and ignores late messages from the retired branch. It stops the
+old source and queue on a worker thread, then releases their selector pad and
+removes them from the pipeline. At most two branches may be pending retirement
+per slot; recovery retries once they have been released.
+If both pending retirements remain blocked, the renderer keeps other live tiles
+visible. A full renderer restart is reserved for a wall with no other recently
+decoded streams and is limited to once every five minutes.
 The black placeholder has its own source branch. Its negotiation messages are
 ignored by camera recovery, since a placeholder error does not establish that
 the RTSP camera failed.
 If both rotation sources stop producing frames, the slot reports STALLED. The
-renderer gives the prepared source fifteen seconds to recover, then exits so
-systemd can restart the pipeline. This fallback briefly interrupts the wall
-but prevents an indefinitely frozen rotation tile. The same five-minute
-cooldown applies if both feeds remain offline after that restart.
+renderer selects the live placeholder so its input selector continues advancing
+while the prepared source reconnects. It gives the prepared source fifteen
+seconds to recover. If other tiles are still live, they keep running while the
+rotation slot is stalled. If the whole wall stops decoding, systemd may restart
+the renderer after the cooldown check. The compositor ignores pads that have
+not yet produced a buffer and reserves latency for RTSP inputs added later.
 On ROCK Pi, `scripts/rockpi-smoke.py --streams 2 --seconds 15 --sink fakesink --recovery`
 exercises both recovery paths with local test streams while the normal HDMI
 wall stays running.
