@@ -45,6 +45,15 @@ def _request_pad(element: Any, template: str) -> Any:
     return request(template)
 
 
+def _request_selector_pad(selector: Any) -> Any:
+    pad = _request_pad(selector, "sink_%u")
+    if pad is not None and pad.find_property("always-ok"):
+        # Inactive live inputs must keep consuming frames. The default
+        # NOT_LINKED flow result otherwise propagates into RTSP after a cut.
+        pad.set_property("always-ok", True)
+    return pad
+
+
 @dataclass
 class _SlotRuntime:
     spec: StreamSpec
@@ -354,7 +363,7 @@ class GStreamerRenderer(RendererBackend):
             self._pipeline.add(element)
         if not placeholder_source.link(placeholder_caps) or not placeholder_caps.link(placeholder_text):
             raise RuntimeError("Unable to link placeholder branch")
-        placeholder_pad = _request_pad(selector, "sink_%u")
+        placeholder_pad = _request_selector_pad(selector)
         if placeholder_pad is None:
             raise RuntimeError("Unable to request placeholder selector pad")
         if placeholder_text.get_static_pad("src").link(placeholder_pad) != Gst.PadLinkReturn.OK:
@@ -406,7 +415,7 @@ class GStreamerRenderer(RendererBackend):
         source_queue.set_property("max-size-buffers", 2)
         self._pipeline.add(source)
         self._pipeline.add(source_queue)
-        camera_pad = _request_pad(runtime.selector, "sink_%u")
+        camera_pad = _request_selector_pad(runtime.selector)
         if camera_pad is None:
             raise RuntimeError("Unable to request camera selector pad")
         if source_queue.get_static_pad("src").link(camera_pad) != Gst.PadLinkReturn.OK:
@@ -456,7 +465,7 @@ class GStreamerRenderer(RendererBackend):
             if queue_added:
                 self._pipeline.remove(queue)
             raise RuntimeError("Unable to add prepared RTSP branch to pipeline")
-        selector_pad = _request_pad(runtime.selector, "sink_%u")
+        selector_pad = _request_selector_pad(runtime.selector)
         if selector_pad is None:
             self._pipeline.remove(source)
             self._pipeline.remove(queue)

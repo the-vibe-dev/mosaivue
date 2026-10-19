@@ -4,7 +4,19 @@ import time
 from types import SimpleNamespace
 
 from mosaivue.renderer.base import HealthState, Rect, StreamSpec
-from mosaivue.renderer.gstreamer import GStreamerRenderer
+from mosaivue.renderer.gstreamer import GStreamerRenderer, _request_selector_pad
+
+
+def test_inactive_selector_pad_accepts_live_standby_buffers() -> None:
+    properties = {}
+    pad = SimpleNamespace(
+        find_property=lambda name: name == "always-ok",
+        set_property=lambda name, value: properties.__setitem__(name, value),
+    )
+    selector = SimpleNamespace(request_pad_simple=lambda template: pad)
+
+    assert _request_selector_pad(selector) is pad
+    assert properties == {"always-ok": True}
 
 
 def test_failed_rotation_source_uses_warm_camera_without_reconnect() -> None:

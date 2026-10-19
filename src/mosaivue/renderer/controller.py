@@ -371,7 +371,6 @@ class RendererController:
 
     def resume_rotation(self, group_id: str) -> None:
         self.rotation_paused.discard(group_id)
-        self.rotation_failures.clear()
 
     def restart_stream(self, slot_id: str) -> dict[str, Any]:
         self.backend.restart_stream(slot_id)

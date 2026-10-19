@@ -38,6 +38,10 @@ Each slot is represented by an independent branch. The compositor and output sin
 Input selectors do not synchronize inactive pads to the active stream. This
 lets standby RTSP decoders keep consuming frames when the displayed source's
 clock pauses; source queues drop old buffers when downstream is slower.
+Selector input pads return `OK` while inactive so that a camera does not
+receive a `NOT_LINKED` flow result merely because another camera is visible.
+Rotating slots use a video-only RTSP source and depayloader; fixed slots keep
+the generic URI decoder.
 The first layout is linked before the pipeline enters `PLAYING`. This is
 required for reliable startup with `kmssink` on the tested ROCK Pi 4B+.
 Rockchip's `mppvideodec` is reported as a hardware decoder when installed.
@@ -67,6 +71,9 @@ Health reports `restart_count` for recovery or manual restarts and `switch_count
 for planned camera changes. These counters begin at zero when the renderer
 service starts. OMXPlayer logs whether an automatic restart followed a player
 exit or 30 seconds without confirmed playback.
+After two missed scheduled cuts, a rotating tile reports `DEGRADED` even if
+its currently displayed camera still decodes. The detail names the missed
+changes; a successful cut clears it.
 
 ## Latency presets
 
