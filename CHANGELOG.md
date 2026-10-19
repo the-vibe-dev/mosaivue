@@ -2,6 +2,13 @@
 
 All notable changes follow a Keep a Changelog-style format. Version numbers use semantic versioning after the first stable release.
 
+## Unreleased
+
+### Fixed
+
+- GStreamer rotation preconnects a sequential or reverse camera and switches only after decoded video arrives. A two-camera group keeps both source branches running between cuts, avoiding decoder teardown and a black tile on the tested ROCK Pi 4B+.
+- The Rock Pi camera profiles that needed more RTSP jitter tolerance can use the `stable` latency preset.
+
 ## [0.1.0b1] - 2026-10-07
 
 ### Added

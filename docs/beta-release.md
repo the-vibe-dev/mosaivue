@@ -9,12 +9,13 @@ This document records what is ready to stage privately and what remains unqualif
 - Camera import from displaycameras, admin setup, camera previews, visual layout editing, renderer selection, service restart, and rollback were exercised on that site.
 - The two-camera rotation tile now prepares its next OMXPlayer offscreen and cuts using D-Bus positioning and layer controls. On the test Pi, more than 20 switches completed with zero recovery restarts; physical-display continuity still needs viewer confirmation.
 - A ROCK Pi 4B+ on Debian 12 arm64 with Rockchip MPP and `kmssink` passed a 15-second, four-source local H.264 RTSP test at 1280×720. All four branches remained LIVE with zero restarts, and a source replacement succeeded while the other branches continued. One real camera also ran at 1920×1080 with increasing frames and zero restarts. This is an initial hardware smoke test, not a long-run or real-camera capacity result.
+- The ROCK Pi 4B+ later ran the imported seven-tile 1920×1080 wall with its two-camera GStreamer rotation. The rotation branches stayed connected between cuts; eight sampled switches left all seven slots LIVE with zero recovery or service restarts. The two rotating UniFi profiles used `stable` RTSP latency. HDMI visual confirmation and longer running time are still required.
 - Python unit, integration, API, and renderer tests plus frontend build, tests, and Chromium checks are part of the staging gate. The dated results are in [Build verification](../BUILD-VERIFICATION.md).
 
 ## Limits to state in a public beta
 
 - Physical output and hardware decoder performance on Raspberry Pi 4 and Pi 5 remain unqualified.
-- ROCK Pi 4B+ has a short KMS/MPP smoke result. Longer real-camera, boot, rotation-timing, and display-viewer tests remain. One imported camera gateway produced inconsistent frames in independent GStreamer probes, so the imported multi-camera layout was not used as capacity evidence.
+- ROCK Pi 4B+ has a short KMS/MPP smoke result and a brief seven-tile real-camera run. Longer real-camera, boot, rotation-timing, and display-viewer tests remain. The site's camera gateway produced inconsistent frames at low RTSP latency; `stable` was needed for the rotating sources.
 - Legacy OMXPlayer lacks exact crop, opacity, label overlay, snapshot, and native pixel-size behavior. It uses letterbox for the `native` aspect choice.
 - OMXPlayer `preconnect=next` uses one bounded extra decoder for sequential or reverse groups. Random and weighted groups prepare at switch time. There is no `all` preload mode.
 - LAN HTTP, local access to the `mosaivue` service account, and legacy OMXPlayer process arguments are trust boundaries. See [security design](security.md).

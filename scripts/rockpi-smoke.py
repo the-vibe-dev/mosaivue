@@ -38,8 +38,8 @@ def main() -> int:
     parser.add_argument("--streams", type=int, choices=range(2, 5), default=4)
     parser.add_argument("--seconds", type=int, default=15)
     args = parser.parse_args()
-    if args.seconds < 10:
-        parser.error("--seconds must be at least 10")
+    if args.seconds < 15:
+        parser.error("--seconds must be at least 15")
 
     Gst.init(None)
     server = GstRtspServer.RTSPServer.new()
@@ -64,10 +64,14 @@ def main() -> int:
         for index in range(args.streams):
             renderer.add_stream(spec(index))
         renderer.start_playback()
+        renderer.prepare_stream("test-0", spec(0, url_index=1))
         time.sleep(5)
         before = renderer.health()
-        renderer.replace_stream("test-0", spec(0, url_index=1))
-        time.sleep(args.seconds - 5)
+        renderer.activate_prepared_stream("test-0", spec(0, url_index=1))
+        renderer.prepare_stream("test-0", spec(0))
+        time.sleep(5)
+        renderer.activate_prepared_stream("test-0", spec(0))
+        time.sleep(args.seconds - 10)
         after = renderer.health()
         summary = {
             "output": after["output"],
@@ -76,6 +80,7 @@ def main() -> int:
                     "state": item["state"],
                     "frames": item["decoded_frames"],
                     "restarts": item["restart_count"],
+                    "switches": item["switch_count"],
                 }
                 for slot, item in after["streams"].items()
             },
@@ -89,6 +94,8 @@ def main() -> int:
                 return 1
             if slot != "test-0" and item["decoded_frames"] <= before["streams"][slot]["decoded_frames"]:
                 return 1
+        if after["streams"]["test-0"]["switch_count"] != 2:
+            return 1
         return 0
     finally:
         renderer.shutdown()

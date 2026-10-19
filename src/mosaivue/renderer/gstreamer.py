@@ -62,6 +62,19 @@ class _SlotRuntime:
     source_queue: Any | None = None
     frame_probe_id: int | None = None
     reconnect_source_id: int | None = None
+    prepared: _PreparedBranch | None = None
+
+
+@dataclass
+class _PreparedBranch:
+    spec: StreamSpec
+    source: Any
+    queue: Any
+    selector_pad: Any
+    frame_probe_id: int
+    frames: int = 0
+    ready: bool = False
+    last_frame_monotonic: float | None = None
 
 
 class GStreamerRenderer(RendererBackend):
@@ -87,6 +100,7 @@ class GStreamerRenderer(RendererBackend):
         self._bus_watch_id: int | None = None
         self._watchdog_source_id: int | None = None
         self._playing = False
+        self._branch_sequence = 0
 
     @classmethod
     def detect(cls) -> RendererCapabilities:
@@ -356,8 +370,10 @@ class GStreamerRenderer(RendererBackend):
     def _create_source_branch(self, runtime: _SlotRuntime) -> None:
         Gst = self.Gst
         assert self._pipeline is not None
-        source = Gst.ElementFactory.make("uridecodebin", f"source-{runtime.spec.slot_id}")
-        source_queue = Gst.ElementFactory.make("queue", f"source-queue-{runtime.spec.slot_id}")
+        self._branch_sequence += 1
+        name = f"{runtime.spec.slot_id}-{self._branch_sequence}"
+        source = Gst.ElementFactory.make("uridecodebin", f"source-{name}")
+        source_queue = Gst.ElementFactory.make("queue", f"source-queue-{name}")
         if not source or not source_queue:
             raise RuntimeError("Unable to create RTSP source branch")
         source.set_property("uri", runtime.spec.url)
@@ -387,30 +403,108 @@ class GStreamerRenderer(RendererBackend):
         health.state = HealthState.connecting
         health.detail = "Connecting to camera"
 
-    def _on_source_setup(self, _: Any, source: Any, slot_id: str) -> None:
+    def prepare_stream(self, slot_id: str, spec: StreamSpec) -> None:
+        self._call(self._prepare_stream, slot_id, spec)
+
+    def _prepare_stream(self, slot_id: str, spec: StreamSpec) -> None:
+        runtime = self._require_slot(slot_id)
+        prepared = runtime.prepared
+        if prepared and (prepared.spec.camera_id, prepared.spec.stream_profile_id, prepared.spec.url) == (
+            spec.camera_id, spec.stream_profile_id, spec.url
+        ):
+            return
+        self._cancel_prepared(slot_id)
+        assert self._pipeline is not None
+        Gst = self.Gst
+        self._branch_sequence += 1
+        name = f"{slot_id}-{self._branch_sequence}"
+        source = Gst.ElementFactory.make("uridecodebin", f"prepared-source-{name}")
+        queue = Gst.ElementFactory.make("queue", f"prepared-queue-{name}")
+        if not source or not queue:
+            raise RuntimeError("Unable to create prepared RTSP branch")
+        source.set_property("uri", spec.url)
+        if source.find_property("use-buffering"):
+            source.set_property("use-buffering", False)
+        source.connect("pad-added", self._on_source_pad_added, slot_id, queue)
+        source.connect("source-setup", self._on_source_setup, slot_id, spec)
+        queue.set_property("leaky", 2)
+        queue.set_property("max-size-buffers", 2)
+        source_added = self._pipeline.add(source)
+        queue_added = self._pipeline.add(queue)
+        if not source_added or not queue_added:
+            if source_added:
+                self._pipeline.remove(source)
+            if queue_added:
+                self._pipeline.remove(queue)
+            raise RuntimeError("Unable to add prepared RTSP branch to pipeline")
+        selector_pad = _request_pad(runtime.selector, "sink_%u")
+        if selector_pad is None:
+            self._pipeline.remove(source)
+            self._pipeline.remove(queue)
+            raise RuntimeError("Unable to request prepared selector pad")
+        if queue.get_static_pad("src").link(selector_pad) != Gst.PadLinkReturn.OK:
+            runtime.selector.release_request_pad(selector_pad)
+            self._pipeline.remove(source)
+            self._pipeline.remove(queue)
+            raise RuntimeError("Unable to link prepared source to selector")
+        probe_id = queue.get_static_pad("src").add_probe(
+            Gst.PadProbeType.BUFFER, self._on_prepared_frame, slot_id
+        )
+        runtime.prepared = _PreparedBranch(spec, source, queue, selector_pad, probe_id)
+        source.sync_state_with_parent()
+        queue.sync_state_with_parent()
+
+    def _on_prepared_frame(self, _: Any, __: Any, slot_id: str) -> Any:
+        runtime = self._slots.get(slot_id)
+        if runtime and runtime.prepared:
+            runtime.prepared.frames += 1
+            runtime.prepared.ready = True
+            runtime.prepared.last_frame_monotonic = time.monotonic()
+        return self.Gst.PadProbeReturn.OK
+
+    def cancel_prepared(self, slot_id: str) -> None:
+        self._call(self._cancel_prepared, slot_id)
+
+    def _cancel_prepared(self, slot_id: str) -> None:
+        runtime = self._slots.get(slot_id)
+        if not runtime or not runtime.prepared or self._pipeline is None:
+            return
+        prepared = runtime.prepared
+        runtime.prepared = None
+        prepared.queue.get_static_pad("src").remove_probe(prepared.frame_probe_id)
+        for element in (prepared.source, prepared.queue):
+            element.set_state(self.Gst.State.NULL)
+            self._pipeline.remove(element)
+        runtime.selector.release_request_pad(prepared.selector_pad)
+
+    def _on_source_setup(self, _: Any, source: Any, slot_id: str, prepared_spec: StreamSpec | None = None) -> None:
         runtime = self._slots.get(slot_id)
         if not runtime:
             return
+        spec = prepared_spec or runtime.spec
         latency_map = {"ultra-low": 50, "low": 120, "normal": 300, "stable": 800}
         if source.find_property("latency"):
-            source.set_property("latency", latency_map.get(runtime.spec.latency_profile, 120))
+            source.set_property("latency", latency_map.get(spec.latency_profile, 120))
         if source.find_property("drop-on-latency"):
-            source.set_property("drop-on-latency", runtime.spec.latency_profile in {"ultra-low", "low"})
+            source.set_property("drop-on-latency", spec.latency_profile in {"ultra-low", "low"})
         if source.find_property("protocols"):
             # GstRtsp.RTSPLowerTrans enum values: UDP=1, UDP_MCAST=2, TCP=4.
-            if urlsplit(runtime.spec.url).scheme.lower() == "rtsps" or runtime.spec.transport == "tcp":
+            if urlsplit(spec.url).scheme.lower() == "rtsps" or spec.transport == "tcp":
                 source.set_property("protocols", 4)
-            elif runtime.spec.transport == "udp":
+            elif spec.transport == "udp":
                 source.set_property("protocols", 1)
 
-    def _on_source_pad_added(self, _: Any, pad: Any, slot_id: str) -> None:
+    def _on_source_pad_added(self, _: Any, pad: Any, slot_id: str, prepared_queue: Any | None = None) -> None:
         runtime = self._slots.get(slot_id)
-        if not runtime or not runtime.source_queue:
+        queue = prepared_queue or (runtime.source_queue if runtime else None)
+        if not runtime or not queue:
+            return
+        if prepared_queue is not None and (not runtime.prepared or runtime.prepared.queue != prepared_queue):
             return
         caps = pad.get_current_caps() or pad.query_caps(None)
         if not caps or not caps.to_string().startswith("video/"):
             return
-        sink_pad = runtime.source_queue.get_static_pad("sink")
+        sink_pad = queue.get_static_pad("sink")
         if not sink_pad.is_linked():
             result = pad.link(sink_pad)
             if result != self.Gst.PadLinkReturn.OK:
@@ -509,6 +603,7 @@ class GStreamerRenderer(RendererBackend):
         self._call(self._remove_stream, slot_id)
 
     def _remove_stream(self, slot_id: str) -> None:
+        self._cancel_prepared(slot_id)
         runtime = self._slots.pop(slot_id, None)
         self._health.pop(slot_id, None)
         if runtime is None or self._pipeline is None or self._compositor is None:
@@ -554,11 +649,55 @@ class GStreamerRenderer(RendererBackend):
     def replace_stream(self, slot_id: str, spec: StreamSpec) -> None:
         self._call(self._replace_stream, slot_id, spec)
 
-    def _replace_stream(self, slot_id: str, spec: StreamSpec) -> None:
+    def activate_prepared_stream(self, slot_id: str, spec: StreamSpec) -> None:
+        self._call(self._replace_stream, slot_id, spec, True)
+
+    def _replace_stream(self, slot_id: str, spec: StreamSpec, require_prepared: bool = False) -> None:
         runtime = self._slots.get(slot_id)
         if runtime is None:
             self._add_stream(spec)
             return
+        prepared = runtime.prepared
+        if prepared and (prepared.spec.camera_id, prepared.spec.stream_profile_id, prepared.spec.url) == (
+            spec.camera_id, spec.stream_profile_id, spec.url
+        ):
+            if not prepared.ready or not prepared.last_frame_monotonic or time.monotonic() - prepared.last_frame_monotonic > 8:
+                raise RuntimeError("Replacement stream is still connecting")
+            previous_health = self._health[slot_id]
+            old = _PreparedBranch(
+                runtime.spec, runtime.source, runtime.source_queue, runtime.selector_camera_pad,
+                runtime.frame_probe_id, previous_health.decoded_frames,
+                previous_health.state == HealthState.live,
+                previous_health.last_frame_monotonic,
+            )
+            runtime.selector.set_property("active-pad", prepared.selector_pad)
+            old.queue.get_static_pad("src").remove_probe(old.frame_probe_id)
+            prepared.queue.get_static_pad("src").remove_probe(prepared.frame_probe_id)
+            old.frame_probe_id = old.queue.get_static_pad("src").add_probe(
+                self.Gst.PadProbeType.BUFFER, self._on_prepared_frame, slot_id
+            )
+            runtime.source = prepared.source
+            runtime.source_queue = prepared.queue
+            runtime.selector_camera_pad = prepared.selector_pad
+            runtime.frame_probe_id = prepared.queue.get_static_pad("src").add_probe(
+                self.Gst.PadProbeType.BUFFER, self._on_frame, slot_id
+            )
+            runtime.prepared = old
+            runtime.spec = spec
+            self._health[slot_id] = StreamHealth(
+                slot_id=slot_id, camera_id=spec.camera_id, state=HealthState.live,
+                last_frame_monotonic=prepared.last_frame_monotonic,
+                decoded_frames=prepared.frames,
+                restart_count=previous_health.restart_count,
+                switch_count=previous_health.switch_count + int(old.spec.camera_id != spec.camera_id),
+                last_restart_reason=previous_health.last_restart_reason,
+            )
+            self._apply_geometry(runtime)
+            self._apply_label(runtime)
+            return
+        if require_prepared:
+            raise RuntimeError("Replacement stream has not been prepared")
+        self._cancel_prepared(slot_id)
         runtime.selector.set_property("active-pad", runtime.selector_placeholder_pad)
         runtime.placeholder_text.set_property("text", f"{spec.camera_name}\nConnecting…")
         previous_health = self._health[slot_id]
@@ -729,6 +868,10 @@ class GStreamerRenderer(RendererBackend):
             error, debug = message.parse_error()
             slot_id = self._slot_for_element(message.src)
             if slot_id:
+                if self._is_prepared_message(message.src, slot_id):
+                    LOGGER.warning("Prepared GStreamer stream error for slot %s: %s", slot_id, error.message)
+                    self._mark_prepared_unavailable(slot_id)
+                    return
                 LOGGER.warning(
                     "GStreamer stream error for slot %s: %s",
                     slot_id,
@@ -742,14 +885,36 @@ class GStreamerRenderer(RendererBackend):
         elif message.type == self.Gst.MessageType.WARNING:
             warning, _ = message.parse_warning()
             slot_id = self._slot_for_element(message.src)
-            if slot_id and slot_id in self._health:
+            if slot_id and slot_id in self._health and not self._is_prepared_message(message.src, slot_id):
                 self._health[slot_id].state = HealthState.degraded
                 self._health[slot_id].detail = warning.message
         elif message.type == self.Gst.MessageType.EOS:
             slot_id = self._slot_for_element(message.src)
             if slot_id:
+                if self._is_prepared_message(message.src, slot_id):
+                    self._mark_prepared_unavailable(slot_id)
+                    return
                 self._mark_offline(slot_id, "End of stream")
                 self._schedule_reconnect(slot_id)
+
+    def _mark_prepared_unavailable(self, slot_id: str) -> None:
+        runtime = self._slots.get(slot_id)
+        if runtime and runtime.prepared:
+            runtime.prepared.ready = False
+            runtime.prepared.last_frame_monotonic = None
+
+    def _is_prepared_message(self, element: Any, slot_id: str) -> bool:
+        runtime = self._slots.get(slot_id)
+        prepared_source = runtime.prepared.source if runtime and runtime.prepared else None
+        current = element
+        while current is not None and prepared_source is not None:
+            try:
+                if current == prepared_source:
+                    return True
+                current = current.get_parent()
+            except Exception:
+                break
+        return False
 
     def _slot_for_element(self, element: Any) -> str | None:
         current = element

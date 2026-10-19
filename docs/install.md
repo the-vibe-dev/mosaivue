@@ -68,9 +68,11 @@ sudo systemctl start mosaivue-renderer.service
 ```
 
 The smoke test uses four local 640×360 H.264 sources, 1280×720 KMS output,
-and one source replacement. A pass does not establish the capacity or
+and two prepared source switches. A pass does not establish the capacity or
 reliability of a particular camera network. Confirm the monitor image and
 test the intended camera mix and rotation interval separately.
+If a camera probes successfully in FFmpeg but GStreamer receives few frames,
+try that camera profile's `stable` latency preset before changing the wall.
 
 ```bash
 id mosaivue

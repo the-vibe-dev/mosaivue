@@ -89,6 +89,10 @@ class RendererBackend(ABC):
     def prepare_stream(self, slot_id: str, spec: StreamSpec) -> None:
         """Optionally prepare a replacement while the current stream remains visible."""
 
+    def activate_prepared_stream(self, slot_id: str, spec: StreamSpec) -> None:
+        """Use a prepared source when supported, otherwise replace the stream."""
+        self.replace_stream(slot_id, spec)
+
     def cancel_prepared(self, slot_id: str) -> None:
         """Discard a prepared replacement for a slot."""
 

@@ -294,7 +294,12 @@ class RendererController:
                 await asyncio.to_thread(self.backend.prepare_stream, slot_id, replacement)
                 return self.status()
             try:
-                await asyncio.to_thread(self.backend.replace_stream, slot_id, replacement)
+                switch = (
+                    self.backend.activate_prepared_stream
+                    if group.preconnect != "off" and group.order_mode not in {"random", "weighted"}
+                    else self.backend.replace_stream
+                )
+                await asyncio.to_thread(switch, slot_id, replacement)
             except Exception:
                 cursor.index = previous_index
                 raise

@@ -82,6 +82,13 @@ reverse camera during the interval; `off` prepares it at switch time. Random
 and weighted groups prepare at switch time because their next camera is not
 predictable.
 
+GStreamer also honors `preconnect=next`. It waits for a decoded frame before
+activating the prepared selector pad. In a two-camera group, both source
+branches stay connected and the selector alternates between them, so a cut
+does not tear down the previous decoder. This uses one extra decoder for that
+rotation slot. If the candidate has not produced a recent frame, the current
+camera stays selected and the controller retries at the next interval.
+
 ## Native backend decision
 
 A custom FFmpeg/DRM/DMA-BUF renderer is not included because this environment cannot prove that the GStreamer implementation fails the functional or performance requirements. The abstraction preserves that option. A native component should be added only with benchmark evidence and must use current APIs.
