@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import logging
 import signal
+from concurrent.futures import Future
 from contextlib import suppress
 from datetime import datetime
 
@@ -17,6 +18,7 @@ from ..security import CredentialCipher, KeyManager
 from ..services.schedules import select_scheduled_layout
 from .controller import RendererController
 from .factory import create_backend
+from .gstreamer import GStreamerRenderer
 from .rpc import RendererRPCServer
 
 LOGGER = logging.getLogger(__name__)
@@ -47,6 +49,20 @@ async def run_daemon() -> None:
         output_width=width,
         output_height=height,
     )
+    loop = asyncio.get_running_loop()
+    if isinstance(backend, GStreamerRenderer):
+        def request_failover(slot_id: str) -> None:
+            future = asyncio.run_coroutine_threadsafe(controller.rotate(slot_id), loop)
+
+            def report(result: Future[object]) -> None:
+                try:
+                    result.result()
+                except Exception:
+                    LOGGER.exception("Prepared rotation failover failed", extra={"slot_id": slot_id})
+
+            future.add_done_callback(report)
+
+        backend.set_failure_callback(request_failover)
     if active_layout_id:
         try:
             await controller.apply_layout(active_layout_id)
@@ -69,7 +85,6 @@ async def run_daemon() -> None:
     )
     await server.start()
     stop_event = asyncio.Event()
-    loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
         with suppress(NotImplementedError):
             loop.add_signal_handler(sig, stop_event.set)
@@ -86,10 +101,8 @@ async def run_daemon() -> None:
                         last_layout = scheduled
                     except Exception:
                         LOGGER.exception("Unable to apply scheduled layout")
-            try:
+            with suppress(TimeoutError):
                 await asyncio.wait_for(stop_event.wait(), timeout=30)
-            except asyncio.TimeoutError:
-                pass
 
     tasks = [
         asyncio.create_task(server.serve_forever(), name="renderer-rpc"),

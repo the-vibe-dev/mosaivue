@@ -88,6 +88,10 @@ branches stay connected and the selector alternates between them, so a cut
 does not tear down the previous decoder. This uses one extra decoder for that
 rotation slot. If the candidate has not produced a recent frame, the current
 camera stays selected and the controller retries at the next interval.
+When the active branch fails, the GStreamer bus asks the controller to select
+the warm alternate. RTSP teardown in the bus callback can block the shared
+video loop, so a rotation branch is kept in place if its alternate is not yet
+ready; the controller retries when fresh frames arrive.
 
 ## Native backend decision
 

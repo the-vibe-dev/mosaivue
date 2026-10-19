@@ -5,8 +5,9 @@ import logging
 import os
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable, TypeVar
+from typing import Any, TypeVar
 from urllib.parse import urlsplit
 
 from .base import HealthState, Rect, RendererBackend, RendererCapabilities, StreamHealth, StreamSpec
@@ -24,7 +25,7 @@ def _import_gst() -> tuple[Any, Any, Any]:
         import gi
 
         gi.require_version("Gst", "1.0")
-        from gi.repository import GLib, Gst, GObject
+        from gi.repository import GLib, GObject, Gst
 
         Gst.init(None)
         return Gst, GLib, GObject
@@ -63,6 +64,7 @@ class _SlotRuntime:
     frame_probe_id: int | None = None
     reconnect_source_id: int | None = None
     prepared: _PreparedBranch | None = None
+    failover_pending: bool = False
 
 
 @dataclass
@@ -101,6 +103,11 @@ class GStreamerRenderer(RendererBackend):
         self._watchdog_source_id: int | None = None
         self._playing = False
         self._branch_sequence = 0
+        self._failure_callback: Callable[[str], None] | None = None
+
+    def set_failure_callback(self, callback: Callable[[str], None]) -> None:
+        """Ask the controller to advance a rotation when its active source fails."""
+        self._failure_callback = callback
 
     @classmethod
     def detect(cls) -> RendererCapabilities:
@@ -334,7 +341,7 @@ class GStreamerRenderer(RendererBackend):
         if placeholder_text.get_static_pad("src").link(placeholder_pad) != Gst.PadLinkReturn.OK:
             raise RuntimeError("Unable to connect placeholder branch to selector")
         chain = [selector, queue, convert, cropper, scale, capsfilter, title_overlay]
-        for first, second in zip(chain, chain[1:]):
+        for first, second in zip(chain, chain[1:], strict=False):
             if not first.link(second):
                 raise RuntimeError(f"Unable to link slot element {first.name} to {second.name}")
         compositor_pad = _request_pad(self._compositor, "sink_%u")
@@ -683,6 +690,7 @@ class GStreamerRenderer(RendererBackend):
                 self.Gst.PadProbeType.BUFFER, self._on_frame, slot_id
             )
             runtime.prepared = old
+            runtime.failover_pending = False
             runtime.spec = spec
             self._health[slot_id] = StreamHealth(
                 slot_id=slot_id, camera_id=spec.camera_id, state=HealthState.live,
@@ -826,12 +834,46 @@ class GStreamerRenderer(RendererBackend):
     def _watchdog_tick(self) -> bool:
         now = time.monotonic()
         for slot_id, health in list(self._health.items()):
-            if health.state == HealthState.live and health.last_frame_monotonic:
-                if now - health.last_frame_monotonic > 8:
-                    health.state = HealthState.stalled
-                    health.detail = "No video frames received for 8 seconds"
-                    self._mark_offline(slot_id, health.detail)
-                    self._schedule_reconnect(slot_id)
+            if (
+                health.state == HealthState.live
+                and health.last_frame_monotonic
+                and now - health.last_frame_monotonic > 8
+            ):
+                if self._request_failover(slot_id):
+                    continue
+                health.state = HealthState.stalled
+                health.detail = "No video frames received for 8 seconds"
+                self._mark_offline(slot_id, health.detail)
+                self._schedule_reconnect(slot_id)
+        return True
+
+    def _request_failover(self, slot_id: str) -> bool:
+        runtime = self._slots.get(slot_id)
+        prepared = runtime.prepared if runtime else None
+        if not runtime or not prepared or not self._failure_callback:
+            return False
+        if runtime.failover_pending:
+            return True
+        if not prepared.ready or not prepared.last_frame_monotonic or time.monotonic() - prepared.last_frame_monotonic > 8:
+            # A rotation branch must never be torn down from the bus callback:
+            # GStreamer can block its own main loop while stopping RTSP there.
+            # Keep the wall responsive and retry when the warm branch recovers.
+            return True
+        runtime.failover_pending = True
+
+        def allow_retry() -> bool:
+            current = self._slots.get(slot_id)
+            if current:
+                current.failover_pending = False
+            return False
+
+        self.GLib.timeout_add_seconds(5, allow_retry)
+        try:
+            self._failure_callback(slot_id)
+        except Exception:
+            runtime.failover_pending = False
+            LOGGER.exception("Could not request prepared rotation failover", extra={"slot_id": slot_id})
+            return False
         return True
 
     def _mark_offline(self, slot_id: str, detail: str) -> None:
@@ -878,6 +920,8 @@ class GStreamerRenderer(RendererBackend):
                     error.message,
                     extra={"slot_id": slot_id},
                 )
+                if self._request_failover(slot_id):
+                    return
                 self._mark_offline(slot_id, error.message)
                 self._schedule_reconnect(slot_id)
             else:
@@ -893,6 +937,8 @@ class GStreamerRenderer(RendererBackend):
             if slot_id:
                 if self._is_prepared_message(message.src, slot_id):
                     self._mark_prepared_unavailable(slot_id)
+                    return
+                if self._request_failover(slot_id):
                     return
                 self._mark_offline(slot_id, "End of stream")
                 self._schedule_reconnect(slot_id)
