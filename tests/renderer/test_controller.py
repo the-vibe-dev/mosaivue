@@ -91,7 +91,7 @@ async def test_sequential_rotation_activates_prepared_source(
     backend.initialize(width=640, height=360)
     initial = StreamSpec(
         slot_id="slot", camera_id=first.id, camera_name=first.name,
-        url="rtsp://192.0.2.31/live", rect=Rect(0, 0, 640, 360),
+        url="rtsp://192.0.2.31/live", rect=Rect(0, 0, 640, 360), is_rotation=True,
     )
     backend.add_stream(initial)
     calls: list[tuple[str, str]] = []
@@ -114,5 +114,6 @@ async def test_sequential_rotation_activates_prepared_source(
     await controller.rotate("slot")
     assert calls == [("prepare", second.id), ("activate", second.id)]
     assert backend.streams["slot"].camera_id == second.id
+    assert backend.streams["slot"].is_rotation
     assert controller.status()["streams"]["slot"]["state"] == "LIVE"
     await controller.shutdown()

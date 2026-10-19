@@ -31,6 +31,7 @@ def spec(index: int, *, url_index: int | None = None) -> StreamSpec:
         rect=Rect((index % columns) * 640, (index // columns) * 360, 640, 360),
         source_width=640,
         source_height=360,
+        is_rotation=index == 0,
     )
 
 

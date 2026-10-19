@@ -43,6 +43,7 @@ class StreamSpec:
     source_width: int | None = None
     source_height: int | None = None
     crop: dict[str, float] = field(default_factory=dict)
+    is_rotation: bool = False
 
 
 @dataclass(slots=True)

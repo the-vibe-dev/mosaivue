@@ -155,6 +155,7 @@ class RendererController:
                 source_width=profile.width,
                 source_height=profile.height,
                 crop=raw_slot.get("crop") or {},
+                is_rotation=raw_slot.get("type") == "rotation",
             )
         return desired, rotations
 
@@ -170,6 +171,7 @@ class RendererController:
                 current.camera_id != spec.camera_id
                 or current.stream_profile_id != spec.stream_profile_id
                 or current.url != spec.url
+                or current.is_rotation != spec.is_rotation
             ):
                 self.backend.replace_stream(slot_id, spec)
             else:
@@ -291,6 +293,7 @@ class RendererController:
                     source_width=profile.width,
                     source_height=profile.height,
                     crop=current.crop,
+                    is_rotation=True,
                 )
             if prepare_only:
                 await asyncio.to_thread(self.backend.prepare_stream, slot_id, replacement)
