@@ -82,6 +82,8 @@ class _SlotRuntime:
     source_refresh_source_id: int | None = None
     connect_started_monotonic: float | None = None
     retired_sources: list[Any] = field(default_factory=list)
+    retirement_warning_monotonic: float = 0.0
+    recovery_warning_monotonic: float = 0.0
 
 
 @dataclass
@@ -1007,9 +1009,12 @@ class GStreamerRenderer(RendererBackend):
                 and not runtime.reconnect_source_id
             ):
                 prepared = runtime.prepared
-                if prepared and prepared.ready and prepared.last_frame_monotonic and now - prepared.last_frame_monotonic < 8:
-                    if self._request_failover(slot_id):
-                        continue
+                if (
+                    prepared and prepared.ready and prepared.last_frame_monotonic
+                    and now - prepared.last_frame_monotonic < 8
+                    and self._request_failover(slot_id)
+                ):
+                    continue
                 self._mark_offline(slot_id, "No first video frame received within 20 seconds")
                 self._schedule_reconnect(slot_id)
                 continue
@@ -1090,7 +1095,10 @@ class GStreamerRenderer(RendererBackend):
             if self._started_at is not None and time.monotonic() - self._started_at < 60:
                 self._arm_rotation_recovery(slot_id)
                 return False
-            LOGGER.error("Both rotation sources remained unavailable", extra={"slot_id": slot_id})
+            now = time.monotonic()
+            if now - getattr(current, "recovery_warning_monotonic", 0.0) >= 60:
+                LOGGER.error("Both rotation sources remained unavailable", extra={"slot_id": slot_id})
+                current.recovery_warning_monotonic = now
             self._restart_renderer_with_cooldown(slot_id, "both rotation sources failed")
             self._arm_rotation_recovery(slot_id)
             return False
@@ -1209,8 +1217,22 @@ class GStreamerRenderer(RendererBackend):
             if prepared.ready and prepared.last_frame_monotonic and time.monotonic() - prepared.last_frame_monotonic < 8:
                 return False
             if len(current.retired_sources) >= 2:
-                LOGGER.warning("Waiting for retired rotation branches to stop", extra={"slot_id": slot_id})
-                self._restart_renderer_with_cooldown(slot_id, "standby source failures")
+                now = time.monotonic()
+                if now - getattr(current, "retirement_warning_monotonic", 0.0) >= 60:
+                    LOGGER.warning("Waiting for retired rotation branches to stop", extra={"slot_id": slot_id})
+                    current.retirement_warning_monotonic = now
+                health = self._health.get(slot_id)
+                # A blocked teardown cannot be repaired by another per-slot
+                # retry. Only interrupt the whole wall after this tile has
+                # been visibly stalled for two minutes; protect the healthy
+                # tiles with a much longer recycle cooldown.
+                last_frame = health.last_frame_monotonic if health else None
+                stalled_for = now - (last_frame or self._started_at or now)
+                if health and health.state == HealthState.stalled and stalled_for >= 120:
+                    self._restart_renderer_with_cooldown(
+                        slot_id, "stalled rotation with blocked RTSP teardown",
+                        allow_healthy_others=True, cooldown_seconds=1800,
+                    )
                 self._schedule_prepared_refresh(slot_id, prepared)
                 return False
             LOGGER.warning("Opening a fresh prepared rotation source", extra={"slot_id": slot_id})
@@ -1261,7 +1283,10 @@ class GStreamerRenderer(RendererBackend):
 
         source.call_async(stop, None)
 
-    def _restart_renderer_with_cooldown(self, slot_id: str, reason: str) -> None:
+    def _restart_renderer_with_cooldown(
+        self, slot_id: str, reason: str, *,
+        allow_healthy_others: bool = False, cooldown_seconds: int = 300,
+    ) -> None:
         """Recycle exhausted decoders once, then avoid repeated wall interruptions."""
         healthy_others = sum(
             1 for other_id, health in self._health.items()
@@ -1269,8 +1294,8 @@ class GStreamerRenderer(RendererBackend):
             and health.last_frame_monotonic
             and time.monotonic() - health.last_frame_monotonic < 8
         )
-        if healthy_others:
-            LOGGER.warning(
+        if healthy_others and not allow_healthy_others:
+            LOGGER.debug(
                 "Keeping %s other live tiles while %s",
                 healthy_others, reason, extra={"slot_id": slot_id},
             )
@@ -1284,8 +1309,8 @@ class GStreamerRenderer(RendererBackend):
         except OSError:
             LOGGER.exception("Could not read rotation recovery marker", extra={"slot_id": slot_id})
             return
-        if now - last < 300:
-            LOGGER.warning("Keeping the active camera while standby remains unavailable", extra={"slot_id": slot_id})
+        if now - last < cooldown_seconds:
+            LOGGER.debug("Renderer recovery is cooling down", extra={"slot_id": slot_id})
             return
         try:
             marker.write_text(f"{now}\n", encoding="utf-8")
