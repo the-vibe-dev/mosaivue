@@ -115,6 +115,18 @@ def test_rtsps_source_uses_tcp_and_stable_jitter_buffer() -> None:
     assert properties == {"latency": 800, "drop-on-latency": False, "protocols": 4}
 
 
+def test_rtsp_source_selects_video_before_opening_media_tracks() -> None:
+    def caps(media: str) -> SimpleNamespace:
+        return SimpleNamespace(
+            get_size=lambda: 1,
+            get_structure=lambda _: SimpleNamespace(get_string=lambda key: media if key == "media" else None),
+        )
+
+    assert GStreamerRenderer._select_video_rtsp_stream(None, 0, caps("video")) is True
+    assert GStreamerRenderer._select_video_rtsp_stream(None, 1, caps("audio")) is False
+    assert GStreamerRenderer._select_video_rtsp_stream(None, 2, None) is False
+
+
 def test_unready_rotation_source_stays_responsive_then_restarts_service(monkeypatch, tmp_path) -> None:
     renderer = object.__new__(GStreamerRenderer)
     renderer._started_at = time.monotonic() - 70

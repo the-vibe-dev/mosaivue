@@ -549,12 +549,22 @@ class GStreamerRenderer(RendererBackend):
             raise RuntimeError("Unable to create RTSP video source")
         rtsp.set_property("location", spec.url)
         self._configure_rtsp_source(rtsp, spec)
+        # UniFi and other cameras can advertise audio alongside video. If we
+        # SETUP audio and merely ignore its pads, the unlinked RTP streams can
+        # make rtspsrc report NOT_NEGOTIATED for the whole session. Select only
+        # video before SETUP so the unused tracks are never opened.
+        rtsp.connect("select-stream", self._select_video_rtsp_stream)
         source.add(rtsp)
         source.add(decoder)
         rtsp.connect("pad-added", self._on_rtp_pad_added, spec.slot_id, source, decoder)
         decoder.connect("pad-added", self._on_decoded_video_pad, spec.slot_id, source, queue)
         decoder.connect("pad-removed", self._on_decoded_video_pad_removed, source)
         return source
+
+    @staticmethod
+    def _select_video_rtsp_stream(_: Any, __: int, caps: Any) -> bool:
+        structure = caps.get_structure(0) if caps and caps.get_size() else None
+        return bool(structure and structure.get_string("media") == "video")
 
     def _on_decoded_video_pad(self, _: Any, pad: Any, slot_id: str, source: Any, queue: Any) -> None:
         caps = pad.get_current_caps() or pad.query_caps(None)

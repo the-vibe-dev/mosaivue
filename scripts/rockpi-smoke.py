@@ -42,6 +42,7 @@ def main() -> int:
     parser.add_argument("--sink", choices=("kmssink", "fakesink"), default="kmssink")
     parser.add_argument("--recovery", action="store_true", help="exercise fixed and prepared source resets")
     parser.add_argument("--force-fresh", action="store_true", help="exercise prepared branch replacement")
+    parser.add_argument("--with-audio", action="store_true", help="advertise an unused RTSP audio track")
     args = parser.parse_args()
     if args.seconds < 15:
         parser.error("--seconds must be at least 15")
@@ -50,13 +51,19 @@ def main() -> int:
     server = GstRtspServer.RTSPServer.new()
     server.set_service("8554")
     mounts = server.get_mount_points()
-    for index in range(max(2, args.streams)):
+    source_count = args.streams + int(args.with_audio)
+    for index in range(source_count):
         factory = GstRtspServer.RTSPMediaFactory.new()
+        audio = (
+            " audiotestsrc is-live=true ! audio/x-raw,rate=8000,channels=1 ! "
+            "alawenc ! rtppcmapay name=pay1 pt=8"
+            if args.with_audio and index < 2 else ""
+        )
         factory.set_launch(
             f"( videotestsrc is-live=true pattern={index + 1} ! "
             "video/x-raw,width=640,height=360,framerate=15/1 ! "
             "x264enc tune=zerolatency speed-preset=ultrafast key-int-max=30 bitrate=500 ! "
-            "rtph264pay name=pay0 pt=96 )"
+            f"rtph264pay name=pay0 pt=96{audio} )"
         )
         factory.set_shared(True)
         mounts.add_factory(f"/demo{index}", factory)
@@ -67,7 +74,9 @@ def main() -> int:
     renderer.initialize(width=1280, height=rows * 360, sink=args.sink)
     try:
         for index in range(args.streams):
-            renderer.add_stream(spec(index))
+            # Keep the fixed test sources video-only. The first two mounts
+            # exercise rotation of RTSP sessions that advertise audio too.
+            renderer.add_stream(spec(index, url_index=index + 1 if args.with_audio and index else None))
         renderer.start_playback()
         renderer.prepare_stream("test-0", spec(0, url_index=1))
         time.sleep(5)
