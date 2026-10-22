@@ -8,7 +8,7 @@ Mosaivue is a local-first camera-monitor appliance for Raspberry Pi and Linux. I
 
 Mosaivue is designed for Raspberry Pi OS Lite and does not require a desktop session. The control plane, camera credentials, layouts, health data, and previews stay on the appliance. There is no required cloud account, analytics service, or telemetry.
 
-> **Beta status:** v0.1.0b1 is staged privately for the tested Raspberry Pi 3B+ and ROCK Pi 4B+ paths. The Pi 3 ran a seven-feed OMXPlayer wall at 1920×1080 for over 12 days and made more than 69,000 rotation cuts. The ROCK Pi ran a seven-tile GStreamer/KMS wall at 1920×1080 for over four hours and made more than 1,000 cuts on its tested build, but a later overnight run stalled its rotation tile. A recovery fix is being qualified; its cold start also required one automatic renderer restart. These are site results, not stream-count guarantees. Raspberry Pi 4 and Pi 5 physical output and decode behavior remain unqualified. See [beta notes](docs/beta-release.md).
+> **Beta status:** v0.1.0b1 is staged privately. The Pi 3B+ ran a seven-feed OMXPlayer wall at 1920×1080 for over 12 days and made more than 69,000 rotation cuts; its updated renderer was still healthy after about 66 hours. The ROCK Pi 4B+ ran a seven-tile GStreamer/KMS wall at 1920×1080 for over four hours and made more than 1,000 cuts, but later long runs had repeated rotation stalls and renderer restarts. Its long-run path is not yet qualified for a public beta. These are site results, not stream-count guarantees. Raspberry Pi 4 and Pi 5 physical output and decode behavior remain unqualified. See [beta notes](docs/beta-release.md).
 
 ## What is included
 
