@@ -134,6 +134,8 @@ with a private certificate authority, set `rtsp_tls_ca_file` in
 `/etc/mosaivue/config.json` to an absolute path containing PEM-encoded trusted
 certificate anchors readable by the `mosaivue` service account. GStreamer then
 uses that CA file for RTSPS sources while retaining certificate validation.
+The file supplies the trust anchors for all GStreamer RTSPS sources on that
+appliance, so include every required camera-server authority in it.
 The RTSPS URL hostname must match the certificate's name. Restart the renderer
 after changing the CA file or this setting.
 

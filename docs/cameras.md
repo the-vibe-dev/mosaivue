@@ -37,5 +37,6 @@ If its certificate is signed by a private CA or is self-signed, put its PEM
 certificate in a file readable by the `mosaivue` service account and set
 `rtsp_tls_ca_file` in `/etc/mosaivue/config.json` to that absolute path. The
 hostname in the URL must match the certificate. Mosaivue validates RTSPS
-certificates; the CA file adds trust for a specific camera server without
-turning validation off for other connections.
+certificates; the configured CA file supplies trust anchors for all Mosaivue
+GStreamer RTSPS sources on that appliance. Include the authorities for every
+secure camera server it needs to connect to.
