@@ -112,8 +112,9 @@ old source and queue on a worker thread, then releases their selector pad and
 removes them from the pipeline. At most two branches may be pending retirement
 per slot; recovery retries once they have been released.
 If both pending retirements remain blocked, the renderer keeps other live tiles
-visible. A full renderer restart is reserved for a wall with no other recently
-decoded streams and is limited to once every five minutes.
+visible. A rotation tile stalled for two minutes can trigger a whole-renderer
+restart, limited by a longer cooldown. A wall with no recently decoded tiles
+can also restart after its shorter cooldown.
 The black placeholder has its own source branch. Its negotiation messages are
 ignored by camera recovery, since a placeholder error does not establish that
 the RTSP camera failed.
@@ -127,6 +128,14 @@ not yet produced a buffer and reserves latency for RTSP inputs added later.
 On ROCK Pi, `scripts/rockpi-smoke.py --streams 2 --seconds 15 --sink fakesink --recovery`
 exercises both recovery paths with local test streams while the normal HDMI
 wall stays running.
+
+RTSPS streams use the system TLS trust database by default. For a camera server
+with a private certificate authority, set `rtsp_tls_ca_file` in
+`/etc/mosaivue/config.json` to an absolute path containing PEM-encoded trusted
+certificate anchors readable by the `mosaivue` service account. GStreamer then
+uses that CA file for RTSPS sources while retaining certificate validation.
+The RTSPS URL hostname must match the certificate's name. Restart the renderer
+after changing the CA file or this setting.
 
 ## Native backend decision
 

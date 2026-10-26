@@ -26,3 +26,13 @@ A 320×180 tile should normally choose `Low`; fullscreen may choose `Main` or `M
 ## Test stream
 
 The test operation uses GStreamer discovery when available and reports connection result, response time, codec, dimensions, framerate, transport, selected decoder, approximate bitrate, and time to first frame. Preview captures are low-rate JPEGs and are separate from HDMI rendering.
+
+## RTSPS certificate trust
+
+RTSPS camera URLs must use the port and hostname supplied by the camera server.
+If its certificate is signed by a private CA or is self-signed, put its PEM
+certificate in a file readable by the `mosaivue` service account and set
+`rtsp_tls_ca_file` in `/etc/mosaivue/config.json` to that absolute path. The
+hostname in the URL must match the certificate. Mosaivue validates RTSPS
+certificates; the CA file adds trust for a specific camera server without
+turning validation off for other connections.

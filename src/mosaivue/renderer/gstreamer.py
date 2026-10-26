@@ -103,7 +103,7 @@ class _PreparedBranch:
 class GStreamerRenderer(RendererBackend):
     """Single-pipeline GStreamer compositor with isolated, replaceable input branches."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, tls_ca_file: str | None = None) -> None:
         self.Gst, self.GLib, self.GObject = _import_gst()
         self._pipeline: Any | None = None
         self._compositor: Any | None = None
@@ -125,6 +125,8 @@ class GStreamerRenderer(RendererBackend):
         self._playing = False
         self._branch_sequence = 0
         self._failure_callback: Callable[[str], None] | None = None
+        self._tls_ca_file = tls_ca_file
+        self._tls_database: Any | None = None
 
     def set_failure_callback(self, callback: Callable[[str], None]) -> None:
         """Ask the controller to advance a rotation when its active source fails."""
@@ -514,13 +516,20 @@ class GStreamerRenderer(RendererBackend):
 
     def _configure_rtsp_source(self, source: Any, spec: StreamSpec) -> None:
         latency_map = {"ultra-low": 50, "low": 120, "normal": 300, "stable": 800}
+        scheme = urlsplit(spec.url).scheme.lower()
+        if scheme == "rtsps" and self._tls_ca_file and source.find_property("tls-database"):
+            if self._tls_database is None:
+                from gi.repository import Gio
+
+                self._tls_database = Gio.TlsFileDatabase.new(self._tls_ca_file)
+            source.set_property("tls-database", self._tls_database)
         if source.find_property("latency"):
             source.set_property("latency", latency_map.get(spec.latency_profile, 120))
         if source.find_property("drop-on-latency"):
             source.set_property("drop-on-latency", spec.latency_profile in {"ultra-low", "low"})
         if source.find_property("protocols"):
             # GstRtsp.RTSPLowerTrans enum values: UDP=1, UDP_MCAST=2, TCP=4.
-            if urlsplit(spec.url).scheme.lower() == "rtsps" or spec.transport == "tcp":
+            if scheme == "rtsps" or spec.transport == "tcp":
                 source.set_property("protocols", 4)
             elif spec.transport == "udp":
                 source.set_property("protocols", 1)

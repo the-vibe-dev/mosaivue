@@ -99,6 +99,8 @@ def test_failed_rotation_source_uses_warm_camera_without_reconnect() -> None:
 
 def test_rtsps_source_uses_tcp_and_stable_jitter_buffer() -> None:
     renderer = object.__new__(GStreamerRenderer)
+    renderer._tls_ca_file = None
+    renderer._tls_database = None
     properties = {}
     source = SimpleNamespace(
         find_property=lambda name: True,
@@ -113,6 +115,23 @@ def test_rtsps_source_uses_tcp_and_stable_jitter_buffer() -> None:
     renderer._configure_rtsp_source(source, spec)
 
     assert properties == {"latency": 800, "drop-on-latency": False, "protocols": 4}
+
+
+def test_rtsps_source_uses_configured_tls_database() -> None:
+    renderer = object.__new__(GStreamerRenderer)
+    renderer._tls_ca_file = "/etc/mosaivue/unifi-ca.crt"
+    trusted_database = object()
+    renderer._tls_database = trusted_database
+    properties = {}
+    source = SimpleNamespace(
+        find_property=lambda name: name == "tls-database",
+        set_property=lambda name, value: properties.__setitem__(name, value),
+    )
+    spec = SimpleNamespace(url="rtsps://camera.example/live", latency_profile="stable", transport="tcp")
+
+    renderer._configure_rtsp_source(source, spec)
+
+    assert properties == {"tls-database": trusted_database}
 
 
 def test_rtsp_source_selects_video_before_opening_media_tracks() -> None:

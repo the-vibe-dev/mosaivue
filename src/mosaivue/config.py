@@ -15,6 +15,7 @@ class Settings:
     port: int = DEFAULT_API_PORT
     renderer_backend: str = "auto"
     renderer_sink: str = "auto"
+    rtsp_tls_ca_file: str | None = None
     output_name: str | None = None
     output_mode: str | None = None
     web_preview_enabled: bool = True
@@ -28,7 +29,7 @@ class Settings:
     profile: str = "balanced"
 
     @classmethod
-    def from_mapping(cls, raw: dict[str, Any]) -> "Settings":
+    def from_mapping(cls, raw: dict[str, Any]) -> Settings:
         allowed = {f.name for f in fields(cls)}
         return cls(**{k: v for k, v in raw.items() if k in allowed})
 
@@ -70,6 +71,7 @@ def load_settings(path: Path | None = None) -> Settings:
         "MOSAIVUE_PORT": ("port", int),
         "MOSAIVUE_RENDERER_BACKEND": ("renderer_backend", str),
         "MOSAIVUE_RENDERER_SINK": ("renderer_sink", str),
+        "MOSAIVUE_RTSP_TLS_CA_FILE": ("rtsp_tls_ca_file", str),
         "MOSAIVUE_LOG_LEVEL": ("log_level", str),
         "MOSAIVUE_SECURE_COOKIES": ("secure_cookies", lambda value: value.lower() in {"1", "true", "yes", "on"}),
     }

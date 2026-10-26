@@ -34,7 +34,7 @@ def create_backend(settings: Settings) -> RendererBackend:
             return OmxPlayerRenderer()
     capabilities = GStreamerRenderer.detect()
     if requested in {"auto", "gstreamer"} and capabilities.available:
-        return GStreamerRenderer()
+        return GStreamerRenderer(tls_ca_file=settings.rtsp_tls_ca_file)
     if requested == "test" and (settings.allow_test_backend or os.environ.get("MOSAIVUE_TESTING") == "1"):
         from .testing import TestRenderer
 
