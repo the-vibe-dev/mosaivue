@@ -18,6 +18,7 @@ All notable changes follow a Keep a Changelog-style format. Version numbers use 
 - Inactive GStreamer selector pads keep accepting live standby buffers, and a camera that produces no first frame receives a targeted retry. Rotation recovery retries its own tile during startup before considering a renderer recycle.
 - OMXPlayer waits for 30 seconds without a successful playback confirmation before restarting a player; a single transient D-Bus check failure no longer triggers a restart on an established tile.
 - The web server starts serving requests before its hardware capability refresh finishes, reducing dashboard startup delay on the tested Pi 3B+.
+- GStreamer RTSPS sources can use an app-scoped PEM CA file through `rtsp_tls_ca_file`, allowing private NVR certificates to be validated when the URL uses a matching hostname.
 
 ## [0.1.0b1] - 2026-10-07
 

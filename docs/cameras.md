@@ -30,6 +30,9 @@ The test operation uses GStreamer discovery when available and reports connectio
 ## RTSPS certificate trust
 
 RTSPS camera URLs must use the port and hostname supplied by the camera server.
+For UniFi Protect, Ubiquiti lists TCP 7441 for RTSPS and TCP 7447 for RTSP in
+its [port reference](https://help.ui.com/hc/en-us/articles/218506997-Required-Ports-Reference).
+Use the stream path and token supplied by Protect for the chosen camera.
 If its certificate is signed by a private CA or is self-signed, put its PEM
 certificate in a file readable by the `mosaivue` service account and set
 `rtsp_tls_ca_file` in `/etc/mosaivue/config.json` to that absolute path. The
