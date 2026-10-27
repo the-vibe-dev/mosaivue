@@ -82,6 +82,7 @@ class _SlotRuntime:
     source_refresh_source_id: int | None = None
     connect_started_monotonic: float | None = None
     retired_sources: list[Any] = field(default_factory=list)
+    retired_queues: list[Any] = field(default_factory=list)
     retirement_warning_monotonic: float = 0.0
     recovery_warning_monotonic: float = 0.0
 
@@ -1275,6 +1276,7 @@ class GStreamerRenderer(RendererBackend):
         """Stop a failed RTSP branch off the main loop, then release its pads."""
         assert self._pipeline is not None
         runtime.retired_sources.append(source)
+        runtime.retired_queues.append(queue)
 
         def stop(element: Any, _: Any) -> None:
             try:
@@ -1296,6 +1298,8 @@ class GStreamerRenderer(RendererBackend):
                 finally:
                     if source in runtime.retired_sources:
                         runtime.retired_sources.remove(source)
+                    if queue in runtime.retired_queues:
+                        runtime.retired_queues.remove(queue)
                 return False
 
             self.GLib.idle_add(cleanup)
@@ -1367,11 +1371,13 @@ class GStreamerRenderer(RendererBackend):
 
     def _is_prepared_message(self, element: Any, slot_id: str) -> bool:
         runtime = self._slots.get(slot_id)
-        prepared_source = runtime.prepared.source if runtime and runtime.prepared else None
+        prepared = runtime.prepared if runtime else None
+        if not prepared:
+            return False
         current = element
-        while current is not None and prepared_source is not None:
+        while current is not None:
             try:
-                if current == prepared_source:
+                if current == prepared.source or current == prepared.queue:
                     return True
                 current = current.get_parent()
             except Exception:
@@ -1380,7 +1386,7 @@ class GStreamerRenderer(RendererBackend):
 
     def _is_retired_message(self, element: Any, slot_id: str) -> bool:
         runtime = self._slots.get(slot_id)
-        retired = runtime.retired_sources if runtime else []
+        retired = (*runtime.retired_sources, *runtime.retired_queues) if runtime else ()
         current = element
         while current is not None:
             try:

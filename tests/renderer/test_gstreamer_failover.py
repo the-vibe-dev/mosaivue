@@ -404,6 +404,45 @@ def test_inactive_placeholder_error_is_not_treated_as_camera_failure() -> None:
     renderer._on_bus_message(None, message)
 
 
+def test_prepared_queue_error_does_not_fail_active_rotation() -> None:
+    renderer = object.__new__(GStreamerRenderer)
+    prepared_queue = SimpleNamespace(get_name=lambda: "prepared-queue-rotation", get_parent=lambda: None)
+    renderer._slots = {
+        "rotation": SimpleNamespace(
+            prepared=SimpleNamespace(source=object(), queue=prepared_queue),
+            retired_sources=[], retired_queues=[], placeholder_source=object(),
+        )
+    }
+    renderer.Gst = SimpleNamespace(MessageType=SimpleNamespace(ERROR=1, WARNING=2, EOS=3))
+    renderer._mark_prepared_unavailable = lambda slot: events.append(("prepared", slot))
+    renderer._request_failover = lambda slot: events.append(("failover", slot))
+    renderer._mark_offline = lambda slot, _: events.append(("offline", slot))
+    events: list[tuple[str, str]] = []
+    message = SimpleNamespace(
+        type=renderer.Gst.MessageType.ERROR, src=prepared_queue,
+        parse_error=lambda: (SimpleNamespace(message="stream error"), "reason not-negotiated (-4)"),
+    )
+
+    renderer._on_bus_message(None, message)
+
+    assert events == [("prepared", "rotation")]
+
+
+def test_retired_queue_errors_are_ignored() -> None:
+    renderer = object.__new__(GStreamerRenderer)
+    retired_queue = SimpleNamespace(get_name=lambda: "prepared-queue-rotation", get_parent=lambda: None)
+    renderer._slots = {
+        "rotation": SimpleNamespace(
+            prepared=None, retired_sources=[], retired_queues=[retired_queue],
+            placeholder_source=object(),
+        )
+    }
+    renderer.Gst = SimpleNamespace(MessageType=SimpleNamespace(ERROR=1, WARNING=2, EOS=3))
+    message = SimpleNamespace(type=renderer.Gst.MessageType.ERROR, src=retired_queue)
+
+    renderer._on_bus_message(None, message)
+
+
 def test_fixed_camera_restarts_source_without_blocking_video_loop() -> None:
     calls: list[str] = []
 
@@ -500,14 +539,16 @@ def test_retired_rtsp_branch_releases_decoder_and_selector_pad_asynchronously() 
     renderer.Gst = SimpleNamespace(State=SimpleNamespace(NULL="NULL"))
     renderer.GLib = SimpleNamespace(idle_add=lambda callback: pending.append(callback))
     renderer._pipeline = pipeline
-    runtime = SimpleNamespace(retired_sources=[], selector=selector)
+    runtime = SimpleNamespace(retired_sources=[], retired_queues=[], selector=selector)
     source = Source()
 
     renderer._retire_branch(runtime, source, queue, object(), 5)
     assert calls == ["scheduled"]
     assert runtime.retired_sources == [source]
+    assert runtime.retired_queues == [queue]
     callbacks.pop()()
     assert calls == ["scheduled", "source:NULL", "queue:NULL"]
     pending.pop()()
     assert calls[-4:] == ["unlink", "release-pad", "remove", "remove"]
     assert runtime.retired_sources == []
+    assert runtime.retired_queues == []
