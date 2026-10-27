@@ -462,8 +462,8 @@ class GStreamerRenderer(RendererBackend):
         runtime.frame_probe_id = probe_pad.add_probe(
             Gst.PadProbeType.BUFFER, self._on_frame, runtime.spec.slot_id, source_queue
         )
-        source.sync_state_with_parent()
         source_queue.sync_state_with_parent()
+        source.sync_state_with_parent()
         health = self._health[runtime.spec.slot_id]
         health.state = HealthState.connecting
         health.detail = "Connecting to camera"
@@ -514,8 +514,8 @@ class GStreamerRenderer(RendererBackend):
             Gst.PadProbeType.BUFFER, self._on_prepared_frame, slot_id, queue
         )
         runtime.prepared = _PreparedBranch(spec, source, queue, selector_pad, probe_id)
-        source.sync_state_with_parent()
         queue.sync_state_with_parent()
+        source.sync_state_with_parent()
 
     def _on_prepared_frame(self, _: Any, __: Any, slot_id: str, queue: Any) -> Any:
         runtime = self._slots.get(slot_id)
