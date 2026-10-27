@@ -258,6 +258,33 @@ class GStreamerRenderer(RendererBackend):
         if result == self.Gst.StateChangeReturn.FAILURE:
             raise RuntimeError("GStreamer output pipeline refused PLAYING state")
         self._playing = True
+        # The slot placeholders are already linked to the compositor. Starting
+        # every RTSP session and hardware decoder in the same state transition
+        # can leave several sources stuck after their first frame on Rockchip.
+        # Bring up one camera now, then give each remaining camera two seconds
+        # before its initial source is opened. Normal layout edits stay eager.
+        pending = [runtime for runtime in self._slots.values() if runtime.source is None]
+        if not pending:
+            return
+        first = next((runtime for runtime in pending if runtime.spec.is_rotation), pending[0])
+        self._start_initial_source(first)
+        for index, runtime in enumerate((item for item in pending if item is not first), start=1):
+            self.GLib.timeout_add_seconds(
+                index * 2, self._start_delayed_source, runtime.spec.slot_id, runtime
+            )
+
+    def _start_delayed_source(self, slot_id: str, runtime: _SlotRuntime) -> bool:
+        if self._playing and self._slots.get(slot_id) is runtime and runtime.source is None:
+            self._start_initial_source(runtime)
+        return False
+
+    def _start_initial_source(self, runtime: _SlotRuntime) -> None:
+        try:
+            self._create_source_branch(runtime)
+        except Exception:
+            LOGGER.exception("Could not start initial camera source", extra={"slot_id": runtime.spec.slot_id})
+            self._mark_offline(runtime.spec.slot_id, "Initial camera source failed")
+            self._schedule_reconnect(runtime.spec.slot_id)
 
     def set_output_size(self, width: int, height: int) -> None:
         self._call(self._set_output_size, width, height)
@@ -406,7 +433,8 @@ class GStreamerRenderer(RendererBackend):
         selector.set_property("active-pad", placeholder_pad)
         for element in elements:
             element.sync_state_with_parent()
-        self._create_source_branch(runtime)
+        if self._playing:
+            self._create_source_branch(runtime)
 
     def _create_source_branch(self, runtime: _SlotRuntime) -> None:
         Gst = self.Gst
@@ -1120,6 +1148,15 @@ class GStreamerRenderer(RendererBackend):
                 LOGGER.error("Both rotation sources remained unavailable", extra={"slot_id": slot_id})
                 current.recovery_warning_monotonic = now
             self._restart_renderer_with_cooldown(slot_id, "both rotation sources failed")
+            # Keep healthy fixed tiles running through short camera outages,
+            # but do not leave a rotation tile black indefinitely when both
+            # sessions fail to recover despite repeated per-stream retries.
+            last_frame = health.last_frame_monotonic if health else None
+            if now - (last_frame or self._started_at or now) >= 120:
+                self._restart_renderer_with_cooldown(
+                    slot_id, "both rotation sources stalled for two minutes",
+                    allow_healthy_others=True, cooldown_seconds=1800,
+                )
             self._arm_rotation_recovery(slot_id)
             return False
 

@@ -7,6 +7,50 @@ from mosaivue.renderer.base import HealthState, Rect, StreamSpec
 from mosaivue.renderer.gstreamer import GStreamerRenderer, _request_selector_pad
 
 
+def test_initial_gstreamer_sources_open_one_at_a_time() -> None:
+    renderer = object.__new__(GStreamerRenderer)
+    opened: list[str] = []
+    scheduled: list[tuple[int, object, str, object]] = []
+    runtimes = {
+        name: SimpleNamespace(spec=SimpleNamespace(slot_id=name, is_rotation=name == "rotation"), source=None)
+        for name in ("fixed-a", "fixed-b", "rotation", "fixed-c")
+    }
+    renderer._slots = runtimes
+    renderer._pipeline = SimpleNamespace(set_state=lambda _: "SUCCESS")
+    renderer.Gst = SimpleNamespace(
+        State=SimpleNamespace(PLAYING="PLAYING"),
+        StateChangeReturn=SimpleNamespace(FAILURE="FAILURE"),
+    )
+    renderer.GLib = SimpleNamespace(
+        timeout_add_seconds=lambda delay, callback, slot_id, runtime: scheduled.append(
+            (delay, callback, slot_id, runtime)
+        )
+    )
+    renderer._playing = False
+    renderer._create_source_branch = lambda runtime: (
+        opened.append(runtime.spec.slot_id), setattr(runtime, "source", object())
+    )
+
+    renderer._start_playback()
+
+    assert opened == ["rotation"]
+    assert [delay for delay, *_ in scheduled] == [2, 4, 6]
+    assert [slot_id for _, _, slot_id, _ in scheduled] == ["fixed-a", "fixed-b", "fixed-c"]
+    for _, callback, slot_id, runtime in scheduled:
+        assert callback(slot_id, runtime) is False
+    assert opened == ["rotation", "fixed-a", "fixed-b", "fixed-c"]
+
+
+def test_delayed_source_does_not_reopen_removed_slot() -> None:
+    renderer = object.__new__(GStreamerRenderer)
+    runtime = SimpleNamespace(spec=SimpleNamespace(slot_id="removed"), source=None)
+    renderer._slots = {}
+    renderer._playing = True
+    renderer._start_initial_source = lambda _: (_ for _ in ()).throw(AssertionError("reopened"))
+
+    assert renderer._start_delayed_source("removed", runtime) is False
+
+
 def test_inactive_selector_pad_accepts_live_standby_buffers() -> None:
     properties = {}
     pad = SimpleNamespace(
@@ -210,6 +254,40 @@ def test_startup_rotation_failure_retries_its_tile_before_wall_recycle(monkeypat
     assert retried == ["rotation"]
     assert exits == []
     assert len(scheduled) == 2
+
+
+def test_rotation_stalled_for_two_minutes_recycles_with_healthy_fixed_tiles(
+    monkeypatch, tmp_path
+) -> None:
+    renderer = object.__new__(GStreamerRenderer)
+    now = time.monotonic()
+    renderer._started_at = now - 300
+    renderer._slots = {
+        "rotation": SimpleNamespace(
+            prepared=SimpleNamespace(ready=False, last_frame_monotonic=None),
+            recovery_source_id=None, restarting=False,
+            source_refresh_source_id=None, reconnect_source_id=None,
+            recovery_warning_monotonic=now,
+        )
+    }
+    renderer._health = {
+        "rotation": SimpleNamespace(last_frame_monotonic=now - 121),
+        "fixed": SimpleNamespace(state=HealthState.live, last_frame_monotonic=now),
+    }
+    scheduled = []
+    renderer.GLib = SimpleNamespace(
+        timeout_add_seconds=lambda _, callback: scheduled.append(callback) or 1
+    )
+    renderer._restart_stream = lambda _: None
+    exits: list[int] = []
+    monkeypatch.setattr("mosaivue.renderer.gstreamer.os._exit", exits.append)
+    monkeypatch.setenv("MOSAIVUE_DATA_DIR", str(tmp_path))
+
+    renderer._arm_rotation_recovery("rotation")
+    scheduled[0]()
+
+    assert exits == [75]
+    assert (tmp_path / "rotation-recovery.stamp").exists()
 
 
 def test_failed_prepared_source_resets_on_gstreamer_worker() -> None:
