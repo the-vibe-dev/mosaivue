@@ -141,7 +141,6 @@ class GStreamerRenderer(RendererBackend):
             return RendererCapabilities(name="gstreamer", available=False, reason=str(exc))
         required = [
             "compositor",
-            "uridecodebin",
             "decodebin",
             "rtspsrc",
             "rtph264depay",
@@ -563,23 +562,10 @@ class GStreamerRenderer(RendererBackend):
             elif spec.transport == "udp":
                 source.set_property("protocols", 1)
 
-    def _on_source_setup(self, _: Any, source: Any, spec: StreamSpec) -> None:
-        self._configure_rtsp_source(source, spec)
-
     def _new_video_source(self, spec: StreamSpec, name: str, queue: Any) -> Any:
         Gst = self.Gst
         if urlsplit(spec.url).scheme.lower() not in {"rtsp", "rtsps"}:
             raise ValueError("GStreamer camera sources must use RTSP or RTSPS")
-        if not spec.is_rotation:
-            source = Gst.ElementFactory.make("uridecodebin", f"{name}-source")
-            if source is None:
-                raise RuntimeError("Unable to create camera source")
-            source.set_property("uri", spec.url)
-            if source.find_property("use-buffering"):
-                source.set_property("use-buffering", False)
-            source.connect("pad-added", self._on_source_pad_added, spec.slot_id, queue)
-            source.connect("source-setup", self._on_source_setup, spec)
-            return source
         source = Gst.Bin.new(f"{name}-source")
         rtsp = Gst.ElementFactory.make("rtspsrc", f"{name}-rtsp")
         decoder = Gst.ElementFactory.make("decodebin", f"{name}-decode")
@@ -587,10 +573,9 @@ class GStreamerRenderer(RendererBackend):
             raise RuntimeError("Unable to create RTSP video source")
         rtsp.set_property("location", spec.url)
         self._configure_rtsp_source(rtsp, spec)
-        # UniFi and other cameras can advertise audio alongside video. If we
-        # SETUP audio and merely ignore its pads, the unlinked RTP streams can
-        # make rtspsrc report NOT_NEGOTIATED for the whole session. Select only
-        # video before SETUP so the unused tracks are never opened.
+        # UniFi and other cameras can advertise audio alongside video. Select
+        # only video before SETUP for fixed and rotating tiles alike so unused
+        # audio tracks cannot stall the RTSP session during cold start.
         rtsp.connect("select-stream", self._select_video_rtsp_stream)
         source.add(rtsp)
         source.add(decoder)

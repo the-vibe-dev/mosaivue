@@ -57,7 +57,7 @@ def main() -> int:
         audio = (
             " audiotestsrc is-live=true ! audio/x-raw,rate=8000,channels=1 ! "
             "alawenc ! rtppcmapay name=pay1 pt=8"
-            if args.with_audio and index < 2 else ""
+            if args.with_audio else ""
         )
         factory.set_launch(
             f"( videotestsrc is-live=true pattern={index + 1} ! "
@@ -74,8 +74,8 @@ def main() -> int:
     renderer.initialize(width=1280, height=rows * 360, sink=args.sink)
     try:
         for index in range(args.streams):
-            # Keep the fixed test sources video-only. The first two mounts
-            # exercise rotation of RTSP sessions that advertise audio too.
+            # Every test mount advertises audio to exercise video-only RTSP
+            # track selection in fixed and rotating branches alike.
             renderer.add_stream(spec(index, url_index=index + 1 if args.with_audio and index else None))
         renderer.start_playback()
         renderer.prepare_stream("test-0", spec(0, url_index=1))
