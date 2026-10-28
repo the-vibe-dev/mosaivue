@@ -24,7 +24,16 @@ cw_detect_platform() {
 
 cw_validate_os() {
   case "$CW_OS_ID" in
-    debian|ubuntu|raspbian) ;;
+    debian|raspbian)
+      if ! dpkg --compare-versions "$CW_OS_VERSION" ge 12 && \
+         [[ ! ( "$CW_OS_VERSION" == 11 && "$CW_ARCH" == armhf ) ]]; then
+        cw_die "Automatic installation requires Debian/Raspberry Pi OS 12 or newer, or 32-bit Raspberry Pi OS 11 for legacy OMXPlayer."
+      fi
+      ;;
+    ubuntu)
+      dpkg --compare-versions "$CW_OS_VERSION" ge 24.04 || \
+        cw_die "Automatic installation requires Ubuntu 24.04 or newer (Python 3.11+)."
+      ;;
     *) cw_die "Unsupported automatic install target: $CW_OS_NAME. Debian, Ubuntu, and Raspberry Pi OS are supported." ;;
   esac
   case "$CW_ARCH" in

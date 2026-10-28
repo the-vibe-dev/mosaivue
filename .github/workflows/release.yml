@@ -27,6 +27,7 @@ jobs:
       - run: rm -rf src/mosaivue/static && cp -a frontend/dist src/mosaivue/static
       - run: pytest
       - run: python scripts/check_release.py
+      - run: sudo -n bash scripts/test-installer-bootstrap.sh
       - run: packaging/build-release.sh dist
       - run: packaging/build-deb.sh dist
       - uses: softprops/action-gh-release@v2

@@ -41,31 +41,85 @@ cw_require_root
 umask 027
 cw_detect_platform
 cw_validate_os
-if ! command -v "$PYTHON_BIN" >/dev/null 2>&1 || ! "$PYTHON_BIN" -c 'import sys; assert sys.version_info >= (3, 11)' >/dev/null 2>&1; then
-  if [[ "$CW_ARCH" != armhf || "$CW_OS_VERSION" != 11 ]]; then
-    cw_die "Python 3.11 or newer is required. Install it, or set MOSAIVUE_PYTHON to its executable."
-  fi
-  RUNTIME_DIR="$PREFIX/runtime/python-3.11.17"
-  if [[ ! -x "$RUNTIME_DIR/bin/python3.11" ]]; then
-    cw_log "Installing pinned Python 3.11 runtime for 32-bit Raspberry Pi OS Bullseye"
-    RUNTIME_TMP="$(mktemp -d)"
-    trap 'rm -rf "$RUNTIME_TMP"' EXIT
-    RUNTIME_ARCHIVE="$RUNTIME_TMP/python.tar.gz"
-    curl -fsSL 'https://github.com/astral-sh/python-build-standalone/releases/download/20261003/cpython-3.11.17%2B20261003-armv7-unknown-linux-gnueabihf-install_only.tar.gz' -o "$RUNTIME_ARCHIVE"
-    printf '%s  %s\n' '4c81c1a643631a6c429065a20c2d38962c136361bc3e2e825ba8fe11c3116250' "$RUNTIME_ARCHIVE" | sha256sum -c -
-    tar -xzf "$RUNTIME_ARCHIVE" -C "$RUNTIME_TMP"
-    install -d -m 0755 "$PREFIX/runtime"
-    mv "$RUNTIME_TMP/python" "$RUNTIME_DIR"
-    rm -rf "$RUNTIME_TMP"
-    trap - EXIT
-  fi
-  PYTHON_BIN="$RUNTIME_DIR/bin/python3.11"
-fi
-PYTHON_BIN="$(command -v "$PYTHON_BIN")"
 VERSION="$(awk -F'"' '/^version =/{print $2; exit}' "$SOURCE_ROOT/pyproject.toml")"
 [[ -n "$VERSION" ]] || cw_die "Could not determine version"
 RELEASE_DIR="$PREFIX/releases/$VERSION"
 PREVIOUS_TARGET="$(readlink -f "$PREFIX/current" 2>/dev/null || true)"
+PREVIOUS_RENDERER_ACTIVE=0
+PREVIOUS_SERVER_ACTIVE=0
+if systemctl is-active --quiet mosaivue-renderer.service; then PREVIOUS_RENDERER_ACTIVE=1; fi
+if systemctl is-active --quiet mosaivue-server.service; then PREVIOUS_SERVER_ACTIVE=1; fi
+BACKUP_DIR=""
+STATE_CHANGES_STARTED=0
+CURRENT_CHANGED=0
+SERVICES_STOPPED=0
+
+restore_failed_install() {
+  local result=$?
+  trap - EXIT
+  if [[ -n "${RUNTIME_TMP:-}" && -d "$RUNTIME_TMP" ]]; then rm -rf "$RUNTIME_TMP"; fi
+  if [[ "$result" -eq 0 ]]; then
+    return
+  fi
+  if [[ "$SERVICES_STOPPED" -eq 1 || "$STATE_CHANGES_STARTED" -eq 1 || "$CURRENT_CHANGED" -eq 1 ]]; then
+    cw_warn "Installation failed; restoring the previous appliance state"
+    systemctl stop mosaivue-server.service mosaivue-renderer.service 2>/dev/null || true
+    if [[ "$CURRENT_CHANGED" -eq 1 ]]; then
+      if [[ -n "$PREVIOUS_TARGET" ]]; then
+        ln -sfn "$PREVIOUS_TARGET" "$PREFIX/current.rollback"
+        mv -Tf "$PREFIX/current.rollback" "$PREFIX/current"
+      else
+        rm -f "$PREFIX/current"
+        systemctl disable mosaivue-server.service mosaivue-renderer.service 2>/dev/null || true
+      fi
+    fi
+    if [[ "$STATE_CHANGES_STARTED" -eq 1 || "$CURRENT_CHANGED" -eq 1 ]]; then
+      rm -f /var/lib/mosaivue/mosaivue.db-wal /var/lib/mosaivue/mosaivue.db-shm
+      if [[ -f "$BACKUP_DIR/mosaivue.db" ]]; then
+        install -o mosaivue -g mosaivue -m 0600 "$BACKUP_DIR/mosaivue.db" /var/lib/mosaivue/mosaivue.db
+      else
+        rm -f /var/lib/mosaivue/mosaivue.db
+      fi
+      for item in config.json master.key setup-token install-prefix python-bin; do
+        if [[ -f "$BACKUP_DIR/$item" ]]; then
+          cp -a "$BACKUP_DIR/$item" "/etc/mosaivue/$item"
+        else
+          rm -f "/etc/mosaivue/$item"
+        fi
+      done
+      for item in renderer-backend.json capabilities.json; do
+        if [[ -f "$BACKUP_DIR/$item" ]]; then
+          cp -a "$BACKUP_DIR/$item" "/var/lib/mosaivue/$item"
+        else
+          rm -f "/var/lib/mosaivue/$item"
+        fi
+      done
+      for entry in \
+        /etc/systemd/system/mosaivue-server.service:server.service \
+        /etc/systemd/system/mosaivue-renderer.service:renderer.service \
+        /etc/systemd/system/mosaivue.target:target \
+        /etc/systemd/system/mosaivue-renderer.service.d/rockchip-devices.conf:rockchip-devices.conf \
+        /usr/lib/tmpfiles.d/mosaivue.conf:tmpfiles.conf; do
+        path="${entry%%:*}"; name="${entry##*:}"
+        if [[ -f "$BACKUP_DIR/$name" ]]; then
+          cp -a "$BACKUP_DIR/$name" "$path"
+        else
+          rm -f "$path"
+        fi
+      done
+    fi
+    systemctl daemon-reload 2>/dev/null || true
+    if [[ "$PREVIOUS_RENDERER_ACTIVE" -eq 1 ]]; then
+      systemctl start mosaivue-renderer.service || cw_warn "Could not restart the previous renderer"
+    fi
+    if [[ "$PREVIOUS_SERVER_ACTIVE" -eq 1 ]]; then
+      systemctl start mosaivue-server.service || cw_warn "Could not restart the previous web service"
+    fi
+  fi
+  [[ -n "$BACKUP_DIR" ]] && cw_warn "Pre-install snapshot: $BACKUP_DIR"
+  exit "$result"
+}
+trap restore_failed_install EXIT
 # A locally rebuilt beta can have the same package version. Keep the running
 # release intact so a failed update can still point current back to it.
 if [[ -e "$RELEASE_DIR" ]]; then
@@ -88,6 +142,26 @@ if [[ "$SKIP_PACKAGES" -eq 0 ]]; then
     gstreamer1.0-gl gstreamer1.0-alsa ffmpeg libdrm2 libgl1 \
     build-essential pkg-config libffi-dev libssl-dev rustc cargo curl ca-certificates jq sqlite3 rsync
 fi
+
+if ! command -v "$PYTHON_BIN" >/dev/null 2>&1 || ! "$PYTHON_BIN" -c 'import sys; assert sys.version_info >= (3, 11)' >/dev/null 2>&1; then
+  if [[ "$CW_ARCH" != armhf || "$CW_OS_VERSION" != 11 ]]; then
+    cw_die "Python 3.11 or newer is required. Install it, or set MOSAIVUE_PYTHON to its executable."
+  fi
+  RUNTIME_DIR="$PREFIX/runtime/python-3.11.17"
+  if [[ ! -x "$RUNTIME_DIR/bin/python3.11" ]]; then
+    cw_log "Installing pinned Python 3.11 runtime for 32-bit Raspberry Pi OS Bullseye"
+    RUNTIME_TMP="$(mktemp -d)"
+    RUNTIME_ARCHIVE="$RUNTIME_TMP/python.tar.gz"
+    curl -fsSL 'https://github.com/astral-sh/python-build-standalone/releases/download/20261003/cpython-3.11.17%2B20261003-armv7-unknown-linux-gnueabihf-install_only.tar.gz' -o "$RUNTIME_ARCHIVE"
+    printf '%s  %s\n' '4c81c1a643631a6c429065a20c2d38962c136361bc3e2e825ba8fe11c3116250' "$RUNTIME_ARCHIVE" | sha256sum -c -
+    tar -xzf "$RUNTIME_ARCHIVE" -C "$RUNTIME_TMP"
+    install -d -m 0755 "$PREFIX/runtime"
+    mv "$RUNTIME_TMP/python" "$RUNTIME_DIR"
+    rm -rf "$RUNTIME_TMP"
+  fi
+  PYTHON_BIN="$RUNTIME_DIR/bin/python3.11"
+fi
+PYTHON_BIN="$(command -v "$PYTHON_BIN")"
 
 if ! getent group mosaivue >/dev/null; then groupadd --system mosaivue; fi
 if ! id mosaivue >/dev/null 2>&1; then
@@ -126,6 +200,50 @@ else
 fi
 # The service account needs traversal and read access to this root-built venv.
 chmod -R a+rX "$RELEASE_DIR.new/.venv"
+
+if [[ "$PREVIOUS_RENDERER_ACTIVE" -eq 1 || "$PREVIOUS_SERVER_ACTIVE" -eq 1 ]]; then
+  SERVICES_STOPPED=1
+  cw_log "Stopping the previous services before database migration"
+  if [[ "$PREVIOUS_SERVER_ACTIVE" -eq 1 ]]; then systemctl stop mosaivue-server.service; fi
+  if [[ "$PREVIOUS_RENDERER_ACTIVE" -eq 1 ]]; then systemctl stop mosaivue-renderer.service; fi
+fi
+BACKUP_DIR="/var/backups/mosaivue-install-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+install -d -m 0700 "$BACKUP_DIR"
+printf '%s\n' "$PREVIOUS_TARGET" >"$BACKUP_DIR/previous-release"
+chmod 0600 "$BACKUP_DIR/previous-release"
+if [[ -f /var/lib/mosaivue/mosaivue.db ]]; then
+  "$PYTHON_BIN" - "$BACKUP_DIR/mosaivue.db" <<'PY'
+import sqlite3
+import sys
+
+source = sqlite3.connect("file:/var/lib/mosaivue/mosaivue.db?mode=ro", uri=True)
+destination = sqlite3.connect(sys.argv[1])
+try:
+    source.backup(destination)
+    assert destination.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+finally:
+    destination.close()
+    source.close()
+PY
+  chmod 0600 "$BACKUP_DIR/mosaivue.db"
+fi
+for item in config.json master.key setup-token install-prefix python-bin; do
+  [[ ! -f "/etc/mosaivue/$item" ]] || cp -a "/etc/mosaivue/$item" "$BACKUP_DIR/$item"
+done
+for item in renderer-backend.json capabilities.json; do
+  [[ ! -f "/var/lib/mosaivue/$item" ]] || cp -a "/var/lib/mosaivue/$item" "$BACKUP_DIR/$item"
+done
+for entry in \
+  /etc/systemd/system/mosaivue-server.service:server.service \
+  /etc/systemd/system/mosaivue-renderer.service:renderer.service \
+  /etc/systemd/system/mosaivue.target:target \
+  /etc/systemd/system/mosaivue-renderer.service.d/rockchip-devices.conf:rockchip-devices.conf \
+  /usr/lib/tmpfiles.d/mosaivue.conf:tmpfiles.conf; do
+  path="${entry%%:*}"; name="${entry##*:}"
+  [[ ! -f "$path" ]] || cp -a "$path" "$BACKUP_DIR/$name"
+done
+cw_log "Saved pre-install snapshot at $BACKUP_DIR"
+STATE_CHANGES_STARTED=1
 
 if [[ ! -f /etc/mosaivue/config.json ]]; then
   cat >/etc/mosaivue/config.json <<JSON
@@ -201,6 +319,7 @@ for entry in (release / ".venv" / "bin").iterdir():
 PY
 ln -sfn "$RELEASE_DIR" "$PREFIX/current.new"
 mv -Tf "$PREFIX/current.new" "$PREFIX/current"
+CURRENT_CHANGED=1
 ln -sfn "$PREFIX/current/.venv/bin/mosaivue" /usr/local/bin/mosaivue
 sed "s|/opt/mosaivue|$PREFIX|g" "$PREFIX/current/systemd/mosaivue-server.service" >/etc/systemd/system/mosaivue-server.service
 sed "s|/opt/mosaivue|$PREFIX|g" "$PREFIX/current/systemd/mosaivue-renderer.service" >/etc/systemd/system/mosaivue-renderer.service

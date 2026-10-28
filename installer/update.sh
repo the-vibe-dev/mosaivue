@@ -15,8 +15,6 @@ while (($#)); do
   esac; shift
 done
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
-BACKUP="/var/lib/mosaivue/pre-update-$(date -u +%Y%m%dT%H%M%SZ).zip"
-if command -v mosaivue >/dev/null; then mosaivue backup --output "$BACKUP" || cw_die "Pre-update backup failed"; fi
 if [[ -z "$ARCHIVE" ]]; then
   cw_log "Checking published Mosaivue releases"
   META="$WORK/releases.json"; curl -fsSL "$RELEASE_API" -o "$META"
@@ -52,11 +50,8 @@ fi
 [[ -f "$ARCHIVE" ]] || cw_die "Release archive not found: $ARCHIVE"
 mkdir "$WORK/source"; tar -xzf "$ARCHIVE" -C "$WORK/source" --strip-components=1
 [[ -x "$WORK/source/installer/install-local.sh" ]] || cw_die "Archive is not a Mosaivue source release"
-PREVIOUS="$(readlink -f "$PREFIX/current" 2>/dev/null || true)"
 if ! MOSAIVUE_PYTHON="$PYTHON_BIN" "$WORK/source/installer/install-local.sh" --non-interactive --prefix "$PREFIX"; then
-  cw_warn "Update failed. Database/config backup remains at $BACKUP"
-  [[ -n "$PREVIOUS" ]] && ln -sfn "$PREVIOUS" "$PREFIX/current"
-  systemctl restart mosaivue-renderer.service mosaivue-server.service || true
+  cw_warn "Update failed; the installer restored the previous release and database snapshot"
   exit 1
 fi
-cw_log "Update complete. Backup: $BACKUP"
+cw_log "Update complete; the installer printed the retained release and snapshot paths"

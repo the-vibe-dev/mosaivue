@@ -2,11 +2,10 @@
 
 ## Requirements
 
-- Raspberry Pi OS Lite, Debian, or Ubuntu; use a 64-bit image for the primary GStreamer path
-- Python 3.11 or later; the installer supplies a pinned runtime on 32-bit Bullseye Pi OS
-- systemd for appliance mode
-- GStreamer core, RTSP/base/good/bad/libav plugins, and PyGObject
-- an HDMI/DRM, Wayland, or X11 output supported by an installed sink
+- Debian 12 or newer, Raspberry Pi OS 12 or newer, or Ubuntu 24.04 or newer, on ARM64 or AMD64. The legacy Raspberry Pi OS 11 ARMHF/OMXPlayer path is also supported when OMXPlayer is already installed.
+- A systemd installation with `sudo`, internet access for OS and Python packages, and enough free space for multimedia packages and a staged copy of the application. The download command needs `curl`; the installer installs Python 3.11+, GStreamer, PyGObject, and its other OS dependencies.
+- A connected display and an available DRM/KMS, Wayland, or X11 sink for local video. Web setup can be completed without a display, but the renderer needs a usable output to show a wall.
+- Camera RTSP/RTSPS URLs and credentials for first-run setup. They are entered in the web UI and are not needed to install the software.
 
 Legacy 32-bit Pi images can use OMXPlayer for HDMI hardware overlays when it is
 installed by the operating system. Set
@@ -19,13 +18,13 @@ over the base config file.
 
 ## Curl install
 
-After the first public release is published:
+After a public beta release is published, run this on the target device:
 
 ```bash
 curl -fsSLo mosaivue-install.sh https://raw.githubusercontent.com/the-vibe-dev/mosaivue/main/install.sh && sudo bash mosaivue-install.sh
 ```
 
-The bootstrap downloads the newest published Mosaivue release with a source-archive checksum and verifies it before installation. For private staging or an offline archive, use the local source install below.
+The bootstrap downloads the newest published Mosaivue source release, verifies its SHA-256 checksum, installs dependencies, and starts the appliance. It prints the local setup URL and one-time administrator token. Anonymous downloads require a public release; for private staging or an offline archive, use the local source install below.
 
 ## Native appliance install
 
@@ -35,7 +34,9 @@ cd mosaivue-0.1.0b1
 sudo ./install.sh
 ```
 
-The installer detects OS, architecture, Pi model, kernel, DRM connectors, installed multimedia tools, CPU, RAM, and codec/plugin availability. It creates the `mosaivue` service account, builds a virtual environment with access to system PyGObject, installs dependencies, initializes the database/key/token, installs hardened systemd units, runs a capability smoke test, and starts the services.
+The installer detects OS, architecture, Pi model, kernel, DRM connectors, installed multimedia tools, CPU, RAM, and codec/plugin availability. It creates the `mosaivue` service account, builds a virtual environment with access to system PyGObject, installs dependencies, initializes the database/key/token, installs hardened systemd units, runs a capability smoke test, and starts the services. Re-running the command stages a separate release and preserves a database and key snapshot before migration.
+
+On Debian 12+, Raspberry Pi OS 12+, or Ubuntu 24.04+, a matching release `.deb` can be installed with `sudo apt install ./mosaivue_<version>_<architecture>.deb`. The package uses the same installer and keeps OS package dependencies in its metadata. The 32-bit Bullseye/OMXPlayer path uses the source installer because that OS does not provide Python 3.11 as a Debian package.
 
 ## Bind modes
 
@@ -94,7 +95,7 @@ HTTPS is optional on a trusted LAN but recommended elsewhere. Bind Mosaivue to l
 sudo mosaivue update
 ```
 
-The helper creates a backup, stages a versioned release, runs the installer, changes the `current` symlink after success, and retains the prior release for rollback. It can also install a local archive:
+The helper stages a versioned release and calls the same installer. Before database migration, it saves a consistent SQLite snapshot and the encryption key under `/var/backups/mosaivue-install-*` with root-only directory access. A failed migration or startup restores the database, key, config, previous release link, and previously running services. The previous release remains installed. To install a local archive:
 
 ```bash
 sudo /opt/mosaivue/current/installer/update.sh --archive ./mosaivue-0.2.0-source.tar.gz
@@ -102,7 +103,7 @@ sudo /opt/mosaivue/current/installer/update.sh --archive ./mosaivue-0.2.0-source
 
 ## Rollback
 
-The update prints the retained previous release path and saves a pre-update backup under `/var/lib/mosaivue/`. To return to a previous release with a compatible database schema, substitute that printed path:
+The update prints the retained previous release path and the pre-update snapshot under `/var/backups/mosaivue-install-*`. For a manual rollback when the database schema is still compatible, substitute the printed previous release path:
 
 ```bash
 PREVIOUS_RELEASE=/opt/mosaivue/releases/0.1.0b1
@@ -112,7 +113,7 @@ sudo systemctl restart mosaivue-renderer.service mosaivue-server.service
 curl -fsS --retry 60 --retry-delay 2 --retry-connrefused http://127.0.0.1:8080/healthz
 ```
 
-Keep the pre-update backup if a future release changes the database schema.
+For a schema-changing release, restore its matching SQLite snapshot and master key together while both services are stopped before starting the older release. Keep the protected snapshot until the update has run long enough to confirm it is healthy.
 
 ## Uninstall
 
