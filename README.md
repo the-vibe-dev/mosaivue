@@ -75,7 +75,7 @@ Mosaivue never hard-codes a stream-count promise. Run `mosaivue benchmark` and f
 For a published beta release, download the bootstrap installer and run it:
 
 ```bash
-curl -fsSLo mosaivue-install.sh https://raw.githubusercontent.com/the-vibe-dev/mosaivue/main/install.sh && sudo bash mosaivue-install.sh
+sudo apt-get update && sudo apt-get install -y curl ca-certificates && curl -fsSLo mosaivue-install.sh https://raw.githubusercontent.com/the-vibe-dev/mosaivue/main/install.sh && sudo bash mosaivue-install.sh
 ```
 
 It downloads a versioned source release, verifies its SHA-256 checksum, and runs the local installer. The automatic installer supports Debian and Raspberry Pi OS 12+, Ubuntu 24.04+, and legacy 32-bit Raspberry Pi OS 11 with an existing OMXPlayer installation. It needs `sudo`, internet access for packages, and a systemd host. See [installation requirements and rollback](docs/install.md).

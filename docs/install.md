@@ -21,10 +21,10 @@ over the base config file.
 After a public beta release is published, run this on the target device:
 
 ```bash
-curl -fsSLo mosaivue-install.sh https://raw.githubusercontent.com/the-vibe-dev/mosaivue/main/install.sh && sudo bash mosaivue-install.sh
+sudo apt-get update && sudo apt-get install -y curl ca-certificates && curl -fsSLo mosaivue-install.sh https://raw.githubusercontent.com/the-vibe-dev/mosaivue/main/install.sh && sudo bash mosaivue-install.sh
 ```
 
-The bootstrap downloads the newest published Mosaivue source release, verifies its SHA-256 checksum, installs dependencies, and starts the appliance. It prints the local setup URL and one-time administrator token. Anonymous downloads require a public release; for private staging or an offline archive, use the local source install below.
+The command installs the download prerequisites first. The bootstrap then supplies Python if the image lacks it, downloads the newest published Mosaivue source release, verifies its SHA-256 checksum, installs the remaining dependencies, and starts the appliance. It prints the local setup URL and one-time administrator token. Anonymous downloads require a public release; for private staging or an offline archive, use the local source install below.
 
 ## Native appliance install
 

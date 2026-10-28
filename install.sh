@@ -12,7 +12,12 @@ if [[ -f "$SCRIPT_PATH" ]]; then
 fi
 
 command -v curl >/dev/null || { echo "curl is required to download a Mosaivue release." >&2; exit 1; }
-command -v python3 >/dev/null || { echo "python3 is required to read GitHub release metadata." >&2; exit 1; }
+if ! command -v python3 >/dev/null; then
+  command -v apt-get >/dev/null || { echo "Python 3 is required to read release metadata. Install it and retry." >&2; exit 1; }
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update
+  apt-get install -y --no-install-recommends python3 ca-certificates
+fi
 command -v sha256sum >/dev/null || { echo "sha256sum is required to verify a release." >&2; exit 1; }
 
 WORK="$(mktemp -d)"
