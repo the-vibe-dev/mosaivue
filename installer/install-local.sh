@@ -139,7 +139,7 @@ if [[ "$SKIP_PACKAGES" -eq 0 ]]; then
     gir1.2-gstreamer-1.0 gir1.2-gst-plugins-base-1.0 \
     gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
     gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-libav \
-    gstreamer1.0-gl gstreamer1.0-alsa ffmpeg libdrm2 libgl1 \
+    gstreamer1.0-gl gstreamer1.0-x gstreamer1.0-alsa ffmpeg libdrm2 libgl1 \
     build-essential pkg-config libffi-dev libssl-dev rustc cargo curl ca-certificates jq sqlite3 rsync
 fi
 

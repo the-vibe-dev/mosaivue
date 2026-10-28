@@ -1,0 +1,8 @@
+[Unit]
+Description=Record Mosaivue beta soak-test metrics
+After=mosaivue-renderer.service mosaivue-server.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/sbin/mosaivue-overnight-sample.py
+TimeoutStartSec=90
