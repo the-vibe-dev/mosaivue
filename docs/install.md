@@ -36,7 +36,7 @@ sudo ./install.sh
 
 The installer detects OS, architecture, Pi model, kernel, DRM connectors, installed multimedia tools, CPU, RAM, and codec/plugin availability. It creates the `mosaivue` service account, builds a virtual environment with access to system PyGObject, installs dependencies, initializes the database/key/token, installs hardened systemd units, runs a capability smoke test, and starts the services. Re-running the command stages a separate release and preserves a database and key snapshot before migration.
 
-On Debian 12+, Raspberry Pi OS 12+, or Ubuntu 24.04+, a matching release `.deb` can be installed with `sudo apt install ./mosaivue_<version>_<architecture>.deb`. The package uses the same installer and keeps OS package dependencies in its metadata. The 32-bit Bullseye/OMXPlayer path uses the source installer because that OS does not provide Python 3.11 as a Debian package.
+On AMD64 Debian 12+ or Ubuntu 24.04+, the release `.deb` can be installed with `sudo apt install ./mosaivue_<version>_amd64.deb`. The package uses the same installer and keeps OS package dependencies in its metadata. ARM devices use the source bootstrap above. The 32-bit Bullseye/OMXPlayer path needs that bootstrap because its OS does not provide Python 3.11 as a Debian package.
 
 ## Bind modes
 

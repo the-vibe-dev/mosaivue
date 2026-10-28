@@ -162,6 +162,15 @@ if ! command -v "$PYTHON_BIN" >/dev/null 2>&1 || ! "$PYTHON_BIN" -c 'import sys;
   PYTHON_BIN="$RUNTIME_DIR/bin/python3.11"
 fi
 PYTHON_BIN="$(command -v "$PYTHON_BIN")"
+"$PYTHON_BIN" - "$BIND_ADDRESS" <<'PY'
+import ipaddress
+import sys
+
+try:
+    ipaddress.ip_address(sys.argv[1])
+except ValueError as exc:
+    raise SystemExit(f"Invalid --bind address: {exc}") from exc
+PY
 
 if ! getent group mosaivue >/dev/null; then groupadd --system mosaivue; fi
 if ! id mosaivue >/dev/null 2>&1; then
@@ -364,16 +373,27 @@ else
   systemctl enable mosaivue-renderer.service mosaivue-server.service
 fi
 
-IP="$(cw_ipv4)"; [[ -n "$IP" ]] || IP=127.0.0.1
+EFFECTIVE_BIND="$(jq -r '.bind' /etc/mosaivue/config.json)"
+EFFECTIVE_PORT="$(jq -r '.port' /etc/mosaivue/config.json)"
+case "$EFFECTIVE_BIND" in
+  0.0.0.0) SETUP_HOST="$(cw_ipv4)"; [[ -n "$SETUP_HOST" ]] || SETUP_HOST=127.0.0.1 ;;
+  ::) SETUP_HOST='[::1]' ;;
+  *:*) SETUP_HOST="[$EFFECTIVE_BIND]" ;;
+  *) SETUP_HOST="$EFFECTIVE_BIND" ;;
+esac
 TOKEN="$(cat /etc/mosaivue/setup-token 2>/dev/null || printf 'already-consumed')"
 printf '\nMosaivue installed successfully.\n\n'
 printf '  Version:      %s\n' "$VERSION"
 printf '  Platform:     %s (%s)\n' "$CW_OS_NAME" "$CW_ARCH"
-printf '  Web setup:    http://%s:8080\n' "$IP"
+if [[ "$NO_START" -eq 1 ]]; then
+  printf '  Web setup (after start): http://%s:%s\n' "$SETUP_HOST" "$EFFECTIVE_PORT"
+else
+  printf '  Web setup:    http://%s:%s\n' "$SETUP_HOST" "$EFFECTIVE_PORT"
+fi
 printf '  Setup token:  %s\n' "$TOKEN"
 printf '  Terminal UI:  sudo -u mosaivue mosaivue tui\n'
 printf '  Diagnostics:  mosaivue doctor\n\n'
-printf 'The web service is explicitly bound to %s. Restrict it with a firewall or change /etc/mosaivue/config.json when LAN access is not desired.\n' "$BIND_ADDRESS"
+printf 'The web service is explicitly bound to %s. Restrict it with a firewall or change /etc/mosaivue/config.json when LAN access is not desired.\n' "$EFFECTIVE_BIND"
 if [[ -n "$PREVIOUS_TARGET" && "$PREVIOUS_TARGET" != "$RELEASE_DIR" ]]; then
   printf 'Previous release retained at %s for rollback.\n' "$PREVIOUS_TARGET"
 fi

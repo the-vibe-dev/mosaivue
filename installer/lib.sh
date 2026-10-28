@@ -18,7 +18,10 @@ cw_detect_platform() {
     . /etc/os-release
     CW_OS_ID="${ID:-unknown}"; CW_OS_VERSION="${VERSION_ID:-unknown}"; CW_OS_NAME="${PRETTY_NAME:-Linux}"
   fi
-  CW_PI_MODEL="$(tr -d '\0' </proc/device-tree/model 2>/dev/null || true)"
+  CW_PI_MODEL=""
+  if [[ -r /proc/device-tree/model ]]; then
+    CW_PI_MODEL="$(tr -d '\0' </proc/device-tree/model)"
+  fi
   CW_DRM_CONNECTORS="$(find /sys/class/drm -maxdepth 1 -type l -name 'card*-*' -printf '%f ' 2>/dev/null || true)"
 }
 
