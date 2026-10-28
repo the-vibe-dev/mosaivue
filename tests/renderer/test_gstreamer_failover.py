@@ -306,8 +306,13 @@ def test_failed_prepared_source_resets_on_gstreamer_worker() -> None:
 
     renderer = object.__new__(GStreamerRenderer)
     source = Source()
+    queue = SimpleNamespace(
+        set_state=lambda state: calls.append(f"queue:{state}"),
+        sync_state_with_parent=lambda: calls.append("queue:resume"),
+    )
     prepared = SimpleNamespace(
         source=source,
+        queue=queue,
         ready=True,
         last_frame_monotonic=time.monotonic(),
         restarting=False,
@@ -327,7 +332,7 @@ def test_failed_prepared_source_resets_on_gstreamer_worker() -> None:
 
     renderer._mark_prepared_unavailable("rotation")
 
-    assert calls == ["async", "state:NULL", "resume"]
+    assert calls == ["async", "queue:NULL", "state:NULL", "queue:resume", "resume"]
     assert prepared.restarting is False
     assert prepared.ready is False
 
@@ -537,8 +542,13 @@ def test_fixed_camera_restarts_source_without_blocking_video_loop() -> None:
 
     renderer = object.__new__(GStreamerRenderer)
     source = Source()
+    queue = SimpleNamespace(
+        set_state=lambda state: calls.append(f"queue:{state}"),
+        sync_state_with_parent=lambda: calls.append("queue:resume"),
+    )
     runtime = SimpleNamespace(
         source=source,
+        source_queue=queue,
         restarting=False,
         selector=SimpleNamespace(set_property=lambda *_: None),
         selector_placeholder_pad=object(),
@@ -554,7 +564,7 @@ def test_fixed_camera_restarts_source_without_blocking_video_loop() -> None:
 
     renderer._restart_stream("fixed")
 
-    assert calls == ["async", "state:NULL", "resume"]
+    assert calls == ["async", "queue:NULL", "state:NULL", "queue:resume", "resume"]
     assert health.restart_count == 1
     assert runtime.restarting is False
 
@@ -625,7 +635,7 @@ def test_retired_rtsp_branch_releases_decoder_and_selector_pad_asynchronously() 
     assert runtime.retired_sources == [source]
     assert runtime.retired_queues == [queue]
     callbacks.pop()()
-    assert calls == ["scheduled", "source:NULL", "queue:NULL"]
+    assert calls == ["scheduled", "queue:NULL", "source:NULL"]
     pending.pop()()
     assert calls[-4:] == ["unlink", "release-pad", "remove", "remove"]
     assert runtime.retired_sources == []

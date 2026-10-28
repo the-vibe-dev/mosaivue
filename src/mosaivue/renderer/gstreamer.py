@@ -967,9 +967,11 @@ class GStreamerRenderer(RendererBackend):
             return
         runtime.restarting = True
         source = runtime.source
+        queue = runtime.source_queue
 
         def stop_source(element: Any, _: Any) -> None:
             try:
+                queue.set_state(self.Gst.State.NULL)
                 element.set_state(self.Gst.State.NULL)
             except Exception:
                 LOGGER.exception("Could not stop failed stream", extra={"slot_id": slot_id})
@@ -978,6 +980,7 @@ class GStreamerRenderer(RendererBackend):
                 current = self._slots.get(slot_id)
                 if current is runtime and current.source is source:
                     runtime.restarting = False
+                    queue.sync_state_with_parent()
                     source.sync_state_with_parent()
                 return False
 
@@ -1302,8 +1305,8 @@ class GStreamerRenderer(RendererBackend):
 
         def stop(element: Any, _: Any) -> None:
             try:
-                element.set_state(self.Gst.State.NULL)
                 queue.set_state(self.Gst.State.NULL)
+                element.set_state(self.Gst.State.NULL)
             except Exception:
                 LOGGER.exception("Could not stop retired camera branch")
 
@@ -1374,6 +1377,7 @@ class GStreamerRenderer(RendererBackend):
 
         def stop_source(source: Any, _: Any) -> None:
             try:
+                prepared.queue.set_state(self.Gst.State.NULL)
                 source.set_state(self.Gst.State.NULL)
             except Exception:
                 LOGGER.exception("Could not stop failed prepared stream", extra={"slot_id": slot_id})
@@ -1382,6 +1386,7 @@ class GStreamerRenderer(RendererBackend):
                 runtime = self._slots.get(slot_id)
                 if runtime and runtime.prepared is prepared:
                     prepared.restarting = False
+                    prepared.queue.sync_state_with_parent()
                     prepared.source.sync_state_with_parent()
                 return False
 
