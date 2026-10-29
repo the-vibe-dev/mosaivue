@@ -97,6 +97,23 @@ screen to 8×8. On the tested NVIDIA driver, Xorg reported the connected HDMI
 output and displayed the wall even while the kernel DRM status file still
 reported `disconnected`; verify the active Xorg mode and the actual monitor.
 
+For a dedicated camera wall, disable Xorg's idle screen blanking and DPMS
+timeouts in the Xorg configuration used by that display. Otherwise Xorg may
+turn off HDMI after ten minutes while Mosaivue continues decoding:
+
+```text
+Section "ServerFlags"
+    Option "BlankTime" "0"
+    Option "StandbyTime" "0"
+    Option "SuspendTime" "0"
+    Option "OffTime" "0"
+EndSection
+```
+
+Restart Xorg and the renderer after changing the file. `DISPLAY=:0 xset q`
+should then report a zero screen-saver timeout, zero DPMS timeouts, and
+`Monitor is On`.
+
 ## First run
 
 The one-time token is printed by the installer and stored in `/etc/mosaivue/setup-token`. It is deleted after a successful administrator setup. The saved administrator password is hashed with scrypt.
