@@ -124,6 +124,41 @@ def test_first_frame_timeout_waits_for_pending_branch_refresh() -> None:
     assert renderer._health["stuck"].state == HealthState.reconnecting
 
 
+def test_degraded_stream_without_frames_reconnects_only_that_camera() -> None:
+    renderer = object.__new__(GStreamerRenderer)
+    now = time.monotonic()
+    renderer._slots = {
+        "stuck": SimpleNamespace(
+            reconnect_source_id=None, prepared=None,
+            selector=SimpleNamespace(set_property=lambda *_: None),
+            selector_placeholder_pad=object(),
+            placeholder_text=SimpleNamespace(set_property=lambda *_: None),
+            spec=SimpleNamespace(camera_name="Stuck"),
+        ),
+        "healthy": SimpleNamespace(),
+    }
+    renderer._health = {
+        "stuck": SimpleNamespace(
+            state=HealthState.degraded, detail="RTSP warning",
+            last_frame_monotonic=now - 9, reconnect_backoff_seconds=1.0,
+        ),
+        "healthy": SimpleNamespace(state=HealthState.live, last_frame_monotonic=now),
+    }
+    scheduled = []
+    renderer.GLib = SimpleNamespace(
+        timeout_add_seconds=lambda delay, callback: scheduled.append((delay, callback)) or 1
+    )
+
+    assert renderer._watchdog_tick() is True
+    assert renderer._health["stuck"].state == HealthState.offline
+    assert renderer._health["stuck"].detail == "No video frames received for 8 seconds"
+    assert renderer._health["healthy"].state == HealthState.live
+    assert [delay for delay, _ in scheduled] == [1]
+    renderer._restart_stream = lambda slot: scheduled.append(("restarted", slot))
+    scheduled[0][1]()
+    assert scheduled[-1] == ("restarted", "stuck")
+
+
 def test_failed_rotation_source_uses_warm_camera_without_reconnect() -> None:
     requested: list[str] = []
     renderer = object.__new__(GStreamerRenderer)

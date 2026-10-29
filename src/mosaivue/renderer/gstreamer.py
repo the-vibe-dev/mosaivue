@@ -1055,7 +1055,7 @@ class GStreamerRenderer(RendererBackend):
                 self._schedule_reconnect(slot_id)
                 continue
             if (
-                health.state == HealthState.live
+                health.state in (HealthState.live, HealthState.degraded)
                 and health.last_frame_monotonic
                 and now - health.last_frame_monotonic > 8
             ):
