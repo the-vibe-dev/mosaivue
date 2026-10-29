@@ -5,7 +5,7 @@
 - Debian 12 or newer, Raspberry Pi OS 12 or newer, or Ubuntu 24.04 or newer, on ARM64 or AMD64. The legacy Raspberry Pi OS 11 ARMHF/OMXPlayer path is also supported when OMXPlayer is already installed.
 - A systemd installation with `sudo`, internet access for OS and Python packages, and enough free space for multimedia packages and a staged copy of the application. The download command needs `curl`; the installer installs Python 3.11+, GStreamer, PyGObject, and its other OS dependencies.
 - A connected display and an available DRM/KMS, Wayland, or X11 sink for local video. Web setup can be completed without a display, but the renderer needs a usable output to show a wall.
-- For NVIDIA GPU passthrough on Ubuntu, install Ubuntu's NVIDIA driver and an Xorg display before selecting `ximagesink`. The installer supplies the X11 GStreamer plugin (`gstreamer1.0-x`) but does not install a vendor GPU driver. Confirm that a physical HDMI/DP connector reports `connected` before claiming monitor output; a virtual X screen can run while every physical connector is disconnected.
+- For NVIDIA GPU passthrough on Ubuntu, install Ubuntu's NVIDIA driver and an Xorg display before selecting `ximagesink`. The installer supplies the X11 GStreamer plugin (`gstreamer1.0-x`) but does not install a vendor GPU driver. Confirm an active output mode with `DISPLAY=:0 xrandr --query` and inspect the physical monitor; a virtual X screen can run while no monitor receives a picture.
 - Camera RTSP/RTSPS URLs and credentials for first-run setup. They are entered in the web UI and are not needed to install the software.
 
 Legacy 32-bit Pi images can use OMXPlayer for HDMI hardware overlays when it is
@@ -81,6 +81,21 @@ id mosaivue
 ls -l /dev/dri
 mosaivue doctor --json
 ```
+
+On an NVIDIA passthrough VM whose Xorg service started before the HDMI monitor
+was connected, `xrandr` may show the connector as connected without an active
+mode. Assign the monitor's supported mode after hotplugging it:
+
+```bash
+DISPLAY=:0 xrandr --query
+DISPLAY=:0 xrandr --fb 1920x1080 --output HDMI-0 --mode 1920x1080 --rate 60 --primary --pos 0x0
+```
+
+Use the output name and mode reported by the first command. A bare
+`xrandr --auto` while every connector is disconnected can shrink the virtual
+screen to 8×8. On the tested NVIDIA driver, Xorg reported the connected HDMI
+output and displayed the wall even while the kernel DRM status file still
+reported `disconnected`; verify the active Xorg mode and the actual monitor.
 
 ## First run
 
