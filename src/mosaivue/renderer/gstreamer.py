@@ -128,6 +128,9 @@ class GStreamerRenderer(RendererBackend):
         self._failure_callback: Callable[[str], None] | None = None
         self._tls_ca_file = tls_ca_file
         self._tls_database: Any | None = None
+        self._rotation_software_decode = os.environ.get(
+            "MOSAIVUE_ROTATION_SOFTWARE_DECODE", ""
+        ).lower() in {"1", "true", "yes"}
 
     def set_failure_callback(self, callback: Callable[[str], None]) -> None:
         """Ask the controller to advance a rotation when its active source fails."""
@@ -573,6 +576,8 @@ class GStreamerRenderer(RendererBackend):
             raise RuntimeError("Unable to create RTSP video source")
         rtsp.set_property("location", spec.url)
         self._configure_rtsp_source(rtsp, spec)
+        if spec.is_rotation and self._rotation_software_decode:
+            decoder.connect("autoplug-select", self._select_rotation_decoder)
         # UniFi and other cameras can advertise audio alongside video. Select
         # only video before SETUP for fixed and rotating tiles alike so unused
         # audio tracks cannot stall the RTSP session during cold start.
@@ -583,6 +588,12 @@ class GStreamerRenderer(RendererBackend):
         decoder.connect("pad-added", self._on_decoded_video_pad, spec.slot_id, source, queue)
         decoder.connect("pad-removed", self._on_decoded_video_pad_removed, source)
         return source
+
+    @staticmethod
+    def _select_rotation_decoder(_: Any, __: Any, ___: Any, factory: Any) -> int:
+        # GstAutoplugSelectResult: TRY=0, SKIP=2. Keep Rockchip MPP on fixed
+        # tiles while testing libav for the two long-running rotation branches.
+        return 2 if factory.get_name() == "mppvideodec" else 0
 
     @staticmethod
     def _select_video_rtsp_stream(_: Any, __: int, caps: Any) -> bool:

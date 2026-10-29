@@ -40,11 +40,16 @@ lets standby RTSP decoders keep consuming frames when the displayed source's
 clock pauses; source queues drop old buffers when downstream is slower.
 Selector input pads return `OK` while inactive so that a camera does not
 receive a `NOT_LINKED` flow result merely because another camera is visible.
-Rotating slots use a video-only RTSP source and depayloader; fixed slots keep
-the generic URI decoder.
+Fixed and rotating slots both select only the video track before RTSP setup.
 The first layout is linked before the pipeline enters `PLAYING`. This is
 required for reliable startup with `kmssink` on the tested ROCK Pi 4B+.
 Rockchip's `mppvideodec` is reported as a hardware decoder when installed.
+On a Rockchip board where rotation repeatedly fails negotiation, the optional
+`MOSAIVUE_ROTATION_SOFTWARE_DECODE=1` renderer environment setting skips
+`mppvideodec` only for rotating sources. Fixed tiles continue using hardware
+decode; the rotating sources use the next available decoder, normally
+`avdec_h264` for H.264. This can increase CPU use. Test it with the intended
+camera mix before relying on it for continuous operation.
 
 ## Sink selection
 

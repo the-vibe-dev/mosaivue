@@ -63,6 +63,17 @@ def test_inactive_selector_pad_accepts_live_standby_buffers() -> None:
     assert properties == {"always-ok": True}
 
 
+def test_rotation_software_decoder_skips_only_rockchip_mpp() -> None:
+    select = GStreamerRenderer._select_rotation_decoder
+
+    def factory(name: str) -> SimpleNamespace:
+        return SimpleNamespace(get_name=lambda: name)
+
+    assert select(None, None, None, factory("mppvideodec")) == 2
+    assert select(None, None, None, factory("avdec_h264")) == 0
+    assert select(None, None, None, factory("h264parse")) == 0
+
+
 def test_first_frame_timeout_retries_only_stuck_camera() -> None:
     renderer = object.__new__(GStreamerRenderer)
     now = time.monotonic()
