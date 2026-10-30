@@ -57,6 +57,7 @@ def renderer_status() -> dict[str, object]:
             "frames": stream.get("decoded_frames"),
             "cuts": stream.get("switch_count"),
             "restarts": stream.get("restart_count"),
+            "decoder": stream.get("decoder_selected"),
             "last_frame_age_seconds": round(max(0.0, time.monotonic() - last), 1)
             if isinstance((last := stream.get("last_frame_monotonic")), (int, float))
             else None,

@@ -43,13 +43,16 @@ receive a `NOT_LINKED` flow result merely because another camera is visible.
 Fixed and rotating slots both select only the video track before RTSP setup.
 The first layout is linked before the pipeline enters `PLAYING`. This is
 required for reliable startup with `kmssink` on the tested ROCK Pi 4B+.
-Rockchip's `mppvideodec` is reported as a hardware decoder when installed.
-On a Rockchip board where rotation repeatedly fails negotiation, the optional
-`MOSAIVUE_ROTATION_SOFTWARE_DECODE=1` renderer environment setting skips
-`mppvideodec` only for rotating sources. Fixed tiles continue using hardware
-decode; the rotating sources use the next available decoder, normally
-`avdec_h264` for H.264. This can increase CPU use. Test it with the intended
-camera mix before relying on it for continuous operation.
+At installation, Mosaivue probes the installed H.264, H.265, and JPEG decoders
+as the service account and saves its per-codec choices in
+`/var/lib/mosaivue/decoder-policy.json`. Fixed tiles prefer a working hardware
+decoder. Rotating tiles prefer a working software decoder; this avoided the
+long-running rotation stalls observed with Rockchip MPP and NVIDIA hardware
+decode on the tested walls. GStreamer is instructed to use the saved decoder,
+and each stream reports the decoder it actually loaded. A software rotation
+decoder can increase CPU use. `MOSAIVUE_ROTATION_SOFTWARE_DECODE=1` remains an
+emergency override if an older installation has no saved policy. A new install
+selects software rotation automatically when its probe passes.
 
 ## Sink selection
 

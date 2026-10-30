@@ -12,6 +12,13 @@ from pathlib import Path
 from typing import Any, TypeVar
 from urllib.parse import urlsplit
 
+from ..services.decoder_policy import (
+    SOFTWARE_DECODERS,
+    codec_from_caps,
+    load_decoder_policy,
+    preferred_software_decoder,
+    video_decoder_factory,
+)
 from .base import HealthState, Rect, RendererBackend, RendererCapabilities, StreamHealth, StreamSpec
 
 LOGGER = logging.getLogger(__name__)
@@ -99,6 +106,7 @@ class _PreparedBranch:
     last_frame_monotonic: float | None = None
     restarting: bool = False
     last_restart_monotonic: float = 0.0
+    decoder_selected: str | None = None
 
 
 class GStreamerRenderer(RendererBackend):
@@ -128,6 +136,7 @@ class GStreamerRenderer(RendererBackend):
         self._failure_callback: Callable[[str], None] | None = None
         self._tls_ca_file = tls_ca_file
         self._tls_database: Any | None = None
+        self._decoder_policy = load_decoder_policy()
         self._rotation_software_decode = os.environ.get(
             "MOSAIVUE_ROTATION_SOFTWARE_DECODE", ""
         ).lower() in {"1", "true", "yes"}
@@ -163,11 +172,26 @@ class GStreamerRenderer(RendererBackend):
             for name in ("kmssink", "waylandsink", "ximagesink", "fbdevsink", "autovideosink")
             if Gst.ElementFactory.find(name)
         ]
-        decoders = [
+        policy = load_decoder_policy()
+        discovered = {
+            item["name"]
+            for codec in policy["codecs"].values()
+            for item in codec.get("candidates", [])
+        }
+        decoders = sorted(discovered) if discovered else [
             name
-            for name in ("v4l2h264dec", "v4l2h265dec", "omxh264dec", "mppvideodec", "avdec_h264", "avdec_h265")
+            for name in (
+                "v4l2h264dec", "v4l2h265dec", "omxh264dec", "mppvideodec",
+                "nvh264dec", "nvh265dec", "avdec_h264", "avdec_h265",
+            )
             if Gst.ElementFactory.find(name)
         ]
+        hardware_decoders = {
+            item["name"]
+            for codec in policy["codecs"].values()
+            for item in codec.get("candidates", [])
+            if item.get("kind") == "hardware"
+        }
         return RendererCapabilities(
             name="gstreamer",
             available=not missing and bool(sinks),
@@ -178,7 +202,9 @@ class GStreamerRenderer(RendererBackend):
             dynamic_source_replace=True,
             per_stream_recovery=True,
             snapshots=False,
-            hardware_decode=any(name.startswith(("v4l2", "omx", "mpp")) for name in decoders),
+            hardware_decode=bool(hardware_decoders) or any(
+                name.startswith(("v4l2", "omx", "mpp", "nv")) for name in decoders
+            ),
         )
 
     def capabilities(self) -> RendererCapabilities:
@@ -576,8 +602,8 @@ class GStreamerRenderer(RendererBackend):
             raise RuntimeError("Unable to create RTSP video source")
         rtsp.set_property("location", spec.url)
         self._configure_rtsp_source(rtsp, spec)
-        if spec.is_rotation and self._rotation_software_decode:
-            decoder.connect("autoplug-select", self._select_rotation_decoder)
+        decoder.connect("autoplug-select", self._select_decoder_factory, spec.is_rotation)
+        decoder.connect("element-added", self._on_decoder_element_added, spec.slot_id, source)
         # UniFi and other cameras can advertise audio alongside video. Select
         # only video before SETUP for fixed and rotating tiles alike so unused
         # audio tracks cannot stall the RTSP session during cold start.
@@ -589,11 +615,42 @@ class GStreamerRenderer(RendererBackend):
         decoder.connect("pad-removed", self._on_decoded_video_pad_removed, source)
         return source
 
-    @staticmethod
-    def _select_rotation_decoder(_: Any, __: Any, ___: Any, factory: Any) -> int:
-        # GstAutoplugSelectResult: TRY=0, SKIP=2. Keep Rockchip MPP on fixed
-        # tiles while testing libav for the two long-running rotation branches.
-        return 2 if factory.get_name() == "mppvideodec" else 0
+    def _select_decoder_factory(
+        self, _: Any, __: Any, caps: Any, factory: Any, is_rotation: bool
+    ) -> int:
+        # GstAutoplugSelectResult: TRY=0, SKIP=2. Parsers and depayloaders
+        # remain eligible; only competing video decoders are filtered.
+        codec = codec_from_caps(caps)
+        if codec is None or not video_decoder_factory(factory):
+            return 0
+        selected = self._decoder_policy.get("codecs", {}).get(codec, {}).get(
+            "rotation" if is_rotation else "fixed"
+        )
+        if is_rotation and self._rotation_software_decode:
+            available = {
+                name for name in SOFTWARE_DECODERS[codec]
+                if self.Gst.ElementFactory.find(name)
+            }
+            selected = preferred_software_decoder(codec, available) or selected
+        if not isinstance(selected, str) or not self.Gst.ElementFactory.find(selected):
+            return 0
+        return 0 if factory.get_name() == selected else 2
+
+    def _on_decoder_element_added(
+        self, _: Any, element: Any, slot_id: str, source: Any
+    ) -> None:
+        factory = element.get_factory()
+        if not factory or not video_decoder_factory(factory):
+            return
+        runtime = self._slots.get(slot_id)
+        if runtime is None:
+            return
+        if runtime.source is source:
+            health = self._health.get(slot_id)
+            if health:
+                health.decoder_selected = factory.get_name()
+        elif runtime.prepared and runtime.prepared.source is source:
+            runtime.prepared.decoder_selected = factory.get_name()
 
     @staticmethod
     def _select_video_rtsp_stream(_: Any, __: int, caps: Any) -> bool:
@@ -825,6 +882,7 @@ class GStreamerRenderer(RendererBackend):
                 runtime.frame_probe_id, previous_health.decoded_frames,
                 previous_health.state == HealthState.live,
                 previous_health.last_frame_monotonic,
+                decoder_selected=previous_health.decoder_selected,
             )
             runtime.selector.set_property("active-pad", prepared.selector_pad)
             old.queue.get_static_pad("src").remove_probe(old.frame_probe_id)
@@ -848,6 +906,7 @@ class GStreamerRenderer(RendererBackend):
                 restart_count=previous_health.restart_count,
                 switch_count=previous_health.switch_count + int(old.spec.camera_id != spec.camera_id),
                 last_restart_reason=previous_health.last_restart_reason,
+                decoder_selected=prepared.decoder_selected,
             )
             self._apply_geometry(runtime)
             self._apply_label(runtime)

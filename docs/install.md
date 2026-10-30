@@ -35,7 +35,9 @@ cd mosaivue-0.1.0b1
 sudo ./install.sh
 ```
 
-The installer detects OS, architecture, Pi model, kernel, DRM connectors, installed multimedia tools, CPU, RAM, and codec/plugin availability. It creates the `mosaivue` service account, builds a virtual environment with access to system PyGObject, installs dependencies, initializes the database/key/token, installs hardened systemd units, runs a capability smoke test, and starts the services. Re-running the command stages a separate release and preserves a database and key snapshot before migration.
+The installer detects OS, architecture, Pi model, kernel, DRM connectors, installed multimedia tools, CPU, RAM, and codec/plugin availability. It creates the `mosaivue` service account, builds a virtual environment with access to system PyGObject, installs dependencies, initializes the database/key/token, installs hardened systemd units, probes video decoders, runs a capability smoke test, and starts the services. Re-running the command stages a separate release and preserves a database and key snapshot before migration.
+
+The decoder probe runs as the `mosaivue` service account, with the same GPU device permissions used by the renderer. For H.264, H.265, and JPEG, it enumerates installed GStreamer decoders and tests each with a short synthetic stream. A working hardware decoder is preferred for fixed tiles; a working software decoder is preferred for rotating tiles because long-running hardware decoder switching stalled on the tested ROCK Pi and NVIDIA walls. The installer saves the choices and probe results in `/var/lib/mosaivue/decoder-policy.json`; `mosaivue doctor --json` includes them. Stream health reports the decoder actually selected by GStreamer. The probe tests basic decode and device access; it cannot guarantee that every camera profile or long-running rotation will work. Re-run the installer after changing GPU drivers or GStreamer plugins to refresh the policy. If no candidate passes, GStreamer retains automatic decoder selection for that codec.
 
 On AMD64 Debian 12+ or Ubuntu 24.04+, the release `.deb` can be installed with `sudo apt install ./mosaivue_<version>_amd64.deb`. The package uses the same installer and keeps OS package dependencies in its metadata. ARM devices use the source bootstrap above. The 32-bit Bullseye/OMXPlayer path needs that bootstrap because its OS does not provide Python 3.11 as a Debian package.
 
@@ -128,7 +130,7 @@ HTTPS is optional on a trusted LAN but recommended elsewhere. Bind Mosaivue to l
 sudo mosaivue update
 ```
 
-The helper stages a versioned release and calls the same installer. Before database migration, it saves a consistent SQLite snapshot and the encryption key under `/var/backups/mosaivue-install-*` with root-only directory access. A failed migration or startup restores the database, key, config, previous release link, and previously running services. The previous release remains installed. To install a local archive:
+The helper stages a versioned release and calls the same installer. Before database migration, it saves a consistent SQLite snapshot, the encryption key, and the decoder policy under `/var/backups/mosaivue-install-*` with root-only directory access. A failed migration or startup restores the database, key, config, decoder policy, previous release link, and previously running services. The previous release remains installed. To install a local archive:
 
 ```bash
 sudo /opt/mosaivue/current/installer/update.sh --archive ./mosaivue-0.2.0-source.tar.gz

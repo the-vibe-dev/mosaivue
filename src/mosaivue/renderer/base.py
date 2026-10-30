@@ -58,6 +58,7 @@ class StreamHealth:
     last_restart_reason: str | None = None
     decoded_frames: int = 0
     dropped_frames: int = 0
+    decoder_selected: str | None = None
     reconnect_backoff_seconds: float = 1.0
 
     def to_dict(self) -> dict[str, Any]:

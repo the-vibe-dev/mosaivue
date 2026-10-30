@@ -12,6 +12,7 @@ from typing import Any
 import psutil
 
 from ..constants import CAPABILITIES_PATH
+from .decoder_policy import load_decoder_policy
 
 
 def _read(path: str | Path) -> str | None:
@@ -142,15 +143,22 @@ def cpu_temperature() -> float | None:
 def detect_capabilities() -> dict[str, Any]:
     release = os_release()
     plugins = gstreamer_plugins()
+    decoder_policy = load_decoder_policy()
     pi_model = detect_pi_model()
     memory = psutil.virtual_memory()
     cpu_count = psutil.cpu_count(logical=True) or 1
     architecture = platform.machine()
-    decoders = [
+    legacy_decoders = [
         name
         for name in ("v4l2h264dec", "v4l2h265dec", "omxh264dec", "mppvideodec", "avdec_h264", "avdec_h265")
         if plugins.get(name)
     ]
+    discovered = {
+        item["name"]
+        for codec in decoder_policy["codecs"].values()
+        for item in codec.get("candidates", [])
+    }
+    decoders = sorted(discovered) if discovered else legacy_decoders
     sinks = [name for name in ("kmssink", "waylandsink", "ximagesink", "fbdevsink") if plugins.get(name)]
     recommended = "balanced"
     if pi_model and "Raspberry Pi 3" in pi_model:
@@ -200,6 +208,7 @@ def detect_capabilities() -> dict[str, Any]:
             "version": _command(["gst-launch-1.0", "--version"]),
             "plugins": plugins,
             "decoders": decoders,
+            "decoder_policy": decoder_policy,
             "sinks": sinks,
         },
         "environment": {

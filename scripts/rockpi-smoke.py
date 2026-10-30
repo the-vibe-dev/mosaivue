@@ -111,6 +111,7 @@ def main() -> int:
                     "state": item["state"],
                     "frames": item["decoded_frames"],
                     "restarts": item["restart_count"],
+                    "decoder": item.get("decoder_selected"),
                     "switches": item["switch_count"],
                 }
                 for slot, item in after["streams"].items()

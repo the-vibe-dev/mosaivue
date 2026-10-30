@@ -87,7 +87,7 @@ restore_failed_install() {
           rm -f "/etc/mosaivue/$item"
         fi
       done
-      for item in renderer-backend.json capabilities.json; do
+      for item in renderer-backend.json capabilities.json decoder-policy.json; do
         if [[ -f "$BACKUP_DIR/$item" ]]; then
           cp -a "$BACKUP_DIR/$item" "/var/lib/mosaivue/$item"
         else
@@ -239,7 +239,7 @@ fi
 for item in config.json master.key setup-token install-prefix python-bin; do
   [[ ! -f "/etc/mosaivue/$item" ]] || cp -a "/etc/mosaivue/$item" "$BACKUP_DIR/$item"
 done
-for item in renderer-backend.json capabilities.json; do
+for item in renderer-backend.json capabilities.json decoder-policy.json; do
   [[ ! -f "/var/lib/mosaivue/$item" ]] || cp -a "/var/lib/mosaivue/$item" "$BACKUP_DIR/$item"
 done
 for entry in \
@@ -290,7 +290,6 @@ from mosaivue.security import KeyManager, generate_setup_token
 from mosaivue.constants import SETUP_TOKEN_PATH
 from mosaivue.db import create_engine
 from mosaivue.models import User
-from mosaivue.services.capabilities import write_capabilities
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 KeyManager().load_or_create()
@@ -300,15 +299,32 @@ if has_admin:
     SETUP_TOKEN_PATH.unlink(missing_ok=True)
 elif not SETUP_TOKEN_PATH.exists():
     print("SETUP_TOKEN=" + generate_setup_token())
-try:
-    write_capabilities()
-except Exception as exc:
-    print(f"Capability scan warning: {exc}")
 PY
 chown -R mosaivue:mosaivue /var/lib/mosaivue /var/cache/mosaivue /var/log/mosaivue
 find /var/lib/mosaivue -maxdepth 1 -type f -name 'mosaivue.db*' -exec chmod 0600 {} +
 chown root:mosaivue /etc/mosaivue/master.key /etc/mosaivue/setup-token 2>/dev/null || true
 chmod 0640 /etc/mosaivue/master.key /etc/mosaivue/setup-token 2>/dev/null || true
+
+cw_log "Probing installed video decoders as the Mosaivue service account"
+if ! (cd "$RELEASE_DIR.new" && runuser -u mosaivue -- ./.venv/bin/python -) <<'PY'
+from mosaivue.services.decoder_policy import write_decoder_policy
+
+plan = write_decoder_policy()
+for codec, choice in plan["codecs"].items():
+    print(f"{codec}: fixed={choice['fixed'] or 'automatic'}, rotation={choice['rotation'] or 'automatic'}")
+PY
+then
+  rm -f /var/lib/mosaivue/decoder-policy.json
+  cw_warn "Decoder probe failed; GStreamer will select from its available decoders automatically"
+fi
+if ! (cd "$RELEASE_DIR.new" && runuser -u mosaivue -- ./.venv/bin/python -) <<'PY'
+from mosaivue.services.capabilities import write_capabilities
+
+write_capabilities()
+PY
+then
+  cw_warn "Capability report failed; see the install doctor result for details"
+fi
 
 rm -rf "$RELEASE_DIR"
 mv "$RELEASE_DIR.new" "$RELEASE_DIR"

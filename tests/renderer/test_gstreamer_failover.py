@@ -63,15 +63,34 @@ def test_inactive_selector_pad_accepts_live_standby_buffers() -> None:
     assert properties == {"always-ok": True}
 
 
-def test_rotation_software_decoder_skips_only_rockchip_mpp() -> None:
-    select = GStreamerRenderer._select_rotation_decoder
+def test_installed_decoder_choices_apply_to_fixed_and_rotating_tiles() -> None:
+    renderer = object.__new__(GStreamerRenderer)
+    renderer._decoder_policy = {
+        "codecs": {"h264": {"fixed": "nvh264dec", "rotation": "avdec_h264"}}
+    }
+    renderer._rotation_software_decode = False
+    renderer.Gst = SimpleNamespace(
+        ElementFactory=SimpleNamespace(find=lambda name: object() if name else None)
+    )
+    caps = SimpleNamespace(
+        get_size=lambda: 1,
+        get_structure=lambda _: SimpleNamespace(get_name=lambda: "video/x-h264"),
+    )
 
-    def factory(name: str) -> SimpleNamespace:
-        return SimpleNamespace(get_name=lambda: name)
+    def factory(name: str, klass: str = "Codec/Decoder/Video") -> SimpleNamespace:
+        return SimpleNamespace(get_name=lambda: name, get_metadata=lambda _: klass)
 
-    assert select(None, None, None, factory("mppvideodec")) == 2
-    assert select(None, None, None, factory("avdec_h264")) == 0
-    assert select(None, None, None, factory("h264parse")) == 0
+    select = renderer._select_decoder_factory
+    assert select(None, None, caps, factory("nvh264dec"), False) == 0
+    assert select(None, None, caps, factory("avdec_h264"), False) == 2
+    assert select(None, None, caps, factory("nvh264dec"), True) == 2
+    assert select(None, None, caps, factory("avdec_h264"), True) == 0
+    assert select(None, None, caps, factory("h264parse", "Codec/Parser/Video"), True) == 0
+
+    renderer._rotation_software_decode = True
+    renderer._decoder_policy = {"codecs": {}}
+    assert select(None, None, caps, factory("nvh264dec"), True) == 2
+    assert select(None, None, caps, factory("avdec_h264"), True) == 0
 
 
 def test_first_frame_timeout_retries_only_stuck_camera() -> None:
