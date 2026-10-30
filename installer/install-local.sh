@@ -99,6 +99,7 @@ restore_failed_install() {
         /etc/systemd/system/mosaivue-renderer.service:renderer.service \
         /etc/systemd/system/mosaivue.target:target \
         /etc/systemd/system/mosaivue-renderer.service.d/rockchip-devices.conf:rockchip-devices.conf \
+        /etc/systemd/system/mosaivue-renderer.service.d/gpu-devices.conf:gpu-devices.conf \
         /usr/lib/tmpfiles.d/mosaivue.conf:tmpfiles.conf; do
         path="${entry%%:*}"; name="${entry##*:}"
         if [[ -f "$BACKUP_DIR/$name" ]]; then
@@ -247,6 +248,7 @@ for entry in \
   /etc/systemd/system/mosaivue-renderer.service:renderer.service \
   /etc/systemd/system/mosaivue.target:target \
   /etc/systemd/system/mosaivue-renderer.service.d/rockchip-devices.conf:rockchip-devices.conf \
+  /etc/systemd/system/mosaivue-renderer.service.d/gpu-devices.conf:gpu-devices.conf \
   /usr/lib/tmpfiles.d/mosaivue.conf:tmpfiles.conf; do
   path="${entry%%:*}"; name="${entry##*:}"
   [[ ! -f "$path" ]] || cp -a "$path" "$BACKUP_DIR/$name"
@@ -354,6 +356,25 @@ if [[ -e /dev/mpp_service ]]; then
   install -d -m 0755 /etc/systemd/system/mosaivue-renderer.service.d
   install -m 0644 "$PREFIX/current/systemd/mosaivue-rockchip-devices.conf" \
     /etc/systemd/system/mosaivue-renderer.service.d/rockchip-devices.conf
+fi
+# The renderer has DevicePolicy=closed. Allow detected NVIDIA character devices
+# so a successful service-account probe remains usable after systemd starts it.
+GPU_DEVICE_RULES=/etc/systemd/system/mosaivue-renderer.service.d/gpu-devices.conf
+GPU_DEVICE_COUNT=0
+for device in /dev/nvidia*; do
+  [[ -c "$device" ]] && ((GPU_DEVICE_COUNT+=1))
+done
+if [[ "$GPU_DEVICE_COUNT" -gt 0 ]]; then
+  install -d -m 0755 /etc/systemd/system/mosaivue-renderer.service.d
+  {
+    printf '[Service]\n'
+    for device in /dev/nvidia*; do
+      [[ -c "$device" ]] && printf 'DeviceAllow=%s rw\n' "$device"
+    done
+  } >"$GPU_DEVICE_RULES"
+  chmod 0644 "$GPU_DEVICE_RULES"
+else
+  rm -f "$GPU_DEVICE_RULES"
 fi
 install -m 0644 "$PREFIX/current/systemd/mosaivue.tmpfiles.conf" /usr/lib/tmpfiles.d/mosaivue.conf
 systemd-tmpfiles --create /usr/lib/tmpfiles.d/mosaivue.conf || true
