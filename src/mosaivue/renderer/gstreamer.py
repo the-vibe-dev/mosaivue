@@ -92,6 +92,9 @@ class _SlotRuntime:
     retired_queues: list[Any] = field(default_factory=list)
     retirement_warning_monotonic: float = 0.0
     recovery_warning_monotonic: float = 0.0
+    negotiation_failure_started_monotonic: float | None = None
+    last_negotiation_failure_monotonic: float | None = None
+    last_negotiation_recycle_attempt_monotonic: float = 0.0
 
 
 @dataclass
@@ -1265,6 +1268,7 @@ class GStreamerRenderer(RendererBackend):
             match = re.search(r"reason [a-zA-Z_-]+ \(-?\d+\)", debug or "")
             reason = match.group(0) if match else "unknown"
             if slot_id:
+                self._observe_rotation_negotiation_failure(slot_id, reason)
                 if self._is_prepared_message(message.src, slot_id):
                     LOGGER.warning(
                         "Prepared GStreamer stream error for slot %s from %s (%s): %s",
@@ -1302,6 +1306,30 @@ class GStreamerRenderer(RendererBackend):
                     return
                 self._mark_offline(slot_id, "End of stream")
                 self._schedule_reconnect(slot_id)
+
+    def _observe_rotation_negotiation_failure(self, slot_id: str, reason: str) -> None:
+        runtime = self._slots.get(slot_id)
+        if not runtime or not runtime.spec.is_rotation or "not-negotiated" not in reason:
+            return
+        now = time.monotonic()
+        last = runtime.last_negotiation_failure_monotonic
+        if last is None or now - last > 60:
+            runtime.negotiation_failure_started_monotonic = now
+        runtime.last_negotiation_failure_monotonic = now
+        started = runtime.negotiation_failure_started_monotonic or now
+        health = self._health.get(slot_id)
+        if (
+            now - started < 120
+            or now - runtime.last_negotiation_recycle_attempt_monotonic < 60
+            or not health
+            or health.state not in (HealthState.stalled, HealthState.offline, HealthState.reconnecting)
+        ):
+            return
+        runtime.last_negotiation_recycle_attempt_monotonic = now
+        self._restart_renderer_with_cooldown(
+            slot_id, "persistent rotation negotiation errors",
+            allow_healthy_others=True, cooldown_seconds=1800,
+        )
 
     def _mark_prepared_unavailable(self, slot_id: str) -> None:
         runtime = self._slots.get(slot_id)

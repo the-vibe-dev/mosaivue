@@ -473,6 +473,72 @@ def test_failed_rotation_keeps_other_live_tiles_running(monkeypatch, tmp_path) -
     assert not (tmp_path / "rotation-recovery.stamp").exists()
 
 
+def test_persistent_rotation_negotiation_errors_recycle_despite_recent_frames(monkeypatch) -> None:
+    renderer = object.__new__(GStreamerRenderer)
+    runtime = SimpleNamespace(
+        spec=SimpleNamespace(is_rotation=True),
+        negotiation_failure_started_monotonic=None,
+        last_negotiation_failure_monotonic=None,
+        last_negotiation_recycle_attempt_monotonic=0.0,
+    )
+    renderer._slots = {"rotation": runtime}
+    renderer._health = {
+        "rotation": SimpleNamespace(
+            state=HealthState.stalled, last_frame_monotonic=220.0,
+        )
+    }
+    now = [100.0]
+    monkeypatch.setattr("mosaivue.renderer.gstreamer.time.monotonic", lambda: now[0])
+    recycles = []
+    renderer._restart_renderer_with_cooldown = lambda *args, **kwargs: recycles.append(
+        (args, kwargs)
+    )
+
+    for moment in (100.0, 150.0, 200.0):
+        now[0] = moment
+        renderer._observe_rotation_negotiation_failure("rotation", "reason not-negotiated (-4)")
+
+    now[0] = 221.0
+    renderer._health["rotation"].state = HealthState.live
+    renderer._observe_rotation_negotiation_failure("rotation", "reason not-negotiated (-4)")
+    assert recycles == []
+    now[0] = 230.0
+    renderer._health["rotation"].state = HealthState.stalled
+    renderer._observe_rotation_negotiation_failure("rotation", "reason not-negotiated (-4)")
+
+    assert recycles == [
+        (("rotation", "persistent rotation negotiation errors"), {
+            "allow_healthy_others": True, "cooldown_seconds": 1800,
+        })
+    ]
+    now[0] = 240.0
+    renderer._observe_rotation_negotiation_failure("rotation", "reason not-negotiated (-4)")
+    assert len(recycles) == 1
+
+
+def test_rotation_negotiation_recovery_resets_after_quiet_minute(monkeypatch) -> None:
+    renderer = object.__new__(GStreamerRenderer)
+    runtime = SimpleNamespace(
+        spec=SimpleNamespace(is_rotation=True),
+        negotiation_failure_started_monotonic=None,
+        last_negotiation_failure_monotonic=None,
+        last_negotiation_recycle_attempt_monotonic=0.0,
+    )
+    renderer._slots = {"rotation": runtime}
+    renderer._health = {"rotation": SimpleNamespace(state=HealthState.stalled)}
+    now = [100.0]
+    monkeypatch.setattr("mosaivue.renderer.gstreamer.time.monotonic", lambda: now[0])
+    recycles = []
+    renderer._restart_renderer_with_cooldown = lambda *args, **kwargs: recycles.append(args)
+
+    for moment in (100.0, 150.0, 211.0, 260.0):
+        now[0] = moment
+        renderer._observe_rotation_negotiation_failure("rotation", "reason not-negotiated (-4)")
+
+    assert recycles == []
+    assert runtime.negotiation_failure_started_monotonic == 211.0
+
+
 def test_blocked_rotation_teardown_recycles_only_after_sustained_stall(monkeypatch, tmp_path) -> None:
     renderer = object.__new__(GStreamerRenderer)
     now = time.monotonic()
@@ -559,9 +625,14 @@ def test_prepared_queue_error_does_not_fail_active_rotation() -> None:
         "rotation": SimpleNamespace(
             prepared=SimpleNamespace(source=object(), queue=prepared_queue),
             retired_sources=[], retired_queues=[], placeholder_source=object(),
+            spec=SimpleNamespace(is_rotation=True),
+            negotiation_failure_started_monotonic=None,
+            last_negotiation_failure_monotonic=None,
+            last_negotiation_recycle_attempt_monotonic=0.0,
         )
     }
     renderer.Gst = SimpleNamespace(MessageType=SimpleNamespace(ERROR=1, WARNING=2, EOS=3))
+    renderer._health = {"rotation": SimpleNamespace(state=HealthState.live)}
     renderer._mark_prepared_unavailable = lambda slot: events.append(("prepared", slot))
     renderer._request_failover = lambda slot: events.append(("failover", slot))
     renderer._mark_offline = lambda slot, _: events.append(("offline", slot))

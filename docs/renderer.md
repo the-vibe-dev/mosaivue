@@ -123,6 +123,9 @@ If both pending retirements remain blocked, the renderer keeps other live tiles
 visible. A rotation tile stalled for two minutes can trigger a whole-renderer
 restart, limited by a longer cooldown. A wall with no recently decoded tiles
 can also restart after its shorter cooldown.
+If repeated RTSP `not-negotiated` errors keep a rotation tile unhealthy for two
+minutes, the same longer-cooldown restart applies even when sporadic frames
+keep resetting its no-frame timer. A quiet minute resets the error streak.
 The black placeholder has its own source branch. Its negotiation messages are
 ignored by camera recovery, since a placeholder error does not establish that
 the RTSP camera failed.
