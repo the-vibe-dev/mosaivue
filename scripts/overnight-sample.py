@@ -68,6 +68,8 @@ def renderer_status() -> dict[str, object]:
         "state": raw.get("state"),
         "backend": raw.get("backend"),
         "sink": raw.get("sink"),
+        "rotation_normalize_caps": raw.get("rotation_normalize_caps"),
+        "rotation_input_caps": raw.get("rotation_input_caps"),
         "uptime_seconds": raw.get("uptime_seconds"),
         "live": sum(stream["state"] == "LIVE" for stream in streams.values()),
         "total": len(streams),

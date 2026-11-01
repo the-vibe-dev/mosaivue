@@ -126,6 +126,15 @@ can also restart after its shorter cooldown.
 If repeated RTSP `not-negotiated` errors keep a rotation tile unhealthy for two
 minutes, the same longer-cooldown restart applies even when sporadic frames
 keep resetting its no-frame timer. A quiet minute resets the error streak.
+For a mixed-resolution rotation group, `MOSAIVUE_ROTATION_NORMALIZE=640x360`
+converts each decoded rotation branch to 640×360 I420 at 15 fps before the
+input selector. This avoids changing the selector's raw caps at each cut. Set
+the dimensions to the lower-resolution camera's native aspect ratio when all
+group members share that ratio; a different target aspect can alter the
+appearance of `cover` and `contain`. This option is under a ROCK Pi soak trial
+and is not selected automatically. Renderer status reports the target and the
+actual active, prepared, and selector caps. On a negotiation error, the
+renderer logs those caps at most once per minute without camera URLs.
 The black placeholder has its own source branch. Its negotiation messages are
 ignored by camera recovery, since a placeholder error does not establish that
 the RTSP camera failed.

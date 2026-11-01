@@ -61,6 +61,25 @@ def _request_selector_pad(selector: Any) -> Any:
     return pad
 
 
+def _rotation_normalize_size(value: str | None) -> tuple[int, int] | None:
+    if not value:
+        return None
+    match = re.fullmatch(r"(\d{2,4})x(\d{2,4})", value)
+    if not match:
+        raise ValueError("MOSAIVUE_ROTATION_NORMALIZE must be WIDTHxHEIGHT")
+    width, height = map(int, match.groups())
+    if not (160 <= width <= 1920 and 90 <= height <= 1080 and width % 2 == height % 2 == 0):
+        raise ValueError("MOSAIVUE_ROTATION_NORMALIZE needs even dimensions within 160x90–1920x1080")
+    return width, height
+
+
+def _normalized_rotation_caps(width: int, height: int) -> str:
+    return (
+        f"video/x-raw,format=I420,width={width},height={height},"
+        "framerate=15/1,pixel-aspect-ratio=1/1"
+    )
+
+
 @dataclass
 class _SlotRuntime:
     spec: StreamSpec
@@ -92,6 +111,7 @@ class _SlotRuntime:
     retired_queues: list[Any] = field(default_factory=list)
     retirement_warning_monotonic: float = 0.0
     recovery_warning_monotonic: float = 0.0
+    last_caps_diagnostic_monotonic: float = 0.0
     negotiation_failure_started_monotonic: float | None = None
     last_negotiation_failure_monotonic: float | None = None
     last_negotiation_recycle_attempt_monotonic: float = 0.0
@@ -140,6 +160,9 @@ class GStreamerRenderer(RendererBackend):
         self._tls_ca_file = tls_ca_file
         self._tls_database: Any | None = None
         self._decoder_policy = load_decoder_policy()
+        self._rotation_normalize_size = _rotation_normalize_size(
+            os.environ.get("MOSAIVUE_ROTATION_NORMALIZE")
+        )
         self._rotation_software_decode = os.environ.get(
             "MOSAIVUE_ROTATION_SOFTWARE_DECODE", ""
         ).lower() in {"1", "true", "yes"}
@@ -380,6 +403,7 @@ class GStreamerRenderer(RendererBackend):
     def _add_stream(self, spec: StreamSpec) -> None:
         if spec.slot_id in self._slots:
             raise ValueError(f"Slot {spec.slot_id} already exists")
+        self._normalize_spec_dimensions(spec)
         assert self._pipeline is not None and self._compositor is not None
         Gst = self.Gst
         selector = Gst.ElementFactory.make("input-selector", f"selector-{spec.slot_id}")
@@ -412,9 +436,12 @@ class GStreamerRenderer(RendererBackend):
         selector.set_property("sync-streams", False)
         placeholder_source.set_property("is-live", True)
         placeholder_source.set_property("pattern", "black")
-        placeholder_caps.set_property(
-            "caps", Gst.Caps.from_string("video/x-raw,width=640,height=360,framerate=5/1")
-        )
+        if spec.is_rotation and self._rotation_normalize_size:
+            width, height = self._rotation_normalize_size
+            placeholder_format = _normalized_rotation_caps(width, height)
+        else:
+            placeholder_format = "video/x-raw,width=640,height=360,framerate=5/1"
+        placeholder_caps.set_property("caps", Gst.Caps.from_string(placeholder_format))
         placeholder_text.set_property("text", f"{spec.camera_name}\nConnecting…")
         placeholder_text.set_property("valignment", "center")
         placeholder_text.set_property("halignment", "center")
@@ -488,6 +515,9 @@ class GStreamerRenderer(RendererBackend):
         runtime.source = source
         runtime.source_queue = source_queue
         runtime.selector_camera_pad = camera_pad
+        source_pad = source.get_static_pad("src")
+        if source_pad:
+            self._on_source_pad_added(source, source_pad, runtime.spec.slot_id, source_queue)
         runtime.connect_started_monotonic = time.monotonic()
         probe_pad = source_queue.get_static_pad("src")
         runtime.frame_probe_id = probe_pad.add_probe(
@@ -545,6 +575,9 @@ class GStreamerRenderer(RendererBackend):
             Gst.PadProbeType.BUFFER, self._on_prepared_frame, slot_id, queue
         )
         runtime.prepared = _PreparedBranch(spec, source, queue, selector_pad, probe_id)
+        source_pad = source.get_static_pad("src")
+        if source_pad:
+            self._on_source_pad_added(source, source_pad, slot_id, queue)
         queue.sync_state_with_parent()
         source.sync_state_with_parent()
 
@@ -614,9 +647,38 @@ class GStreamerRenderer(RendererBackend):
         source.add(rtsp)
         source.add(decoder)
         rtsp.connect("pad-added", self._on_rtp_pad_added, spec.slot_id, source, decoder)
-        decoder.connect("pad-added", self._on_decoded_video_pad, spec.slot_id, source, queue)
-        decoder.connect("pad-removed", self._on_decoded_video_pad_removed, source)
+        if spec.is_rotation and self._rotation_normalize_size:
+            width, height = self._rotation_normalize_size
+            convert = Gst.ElementFactory.make("videoconvert", f"normalize-convert-{name}")
+            scale = Gst.ElementFactory.make("videoscale", f"normalize-scale-{name}")
+            rate = Gst.ElementFactory.make("videorate", f"normalize-rate-{name}")
+            capsfilter = Gst.ElementFactory.make("capsfilter", f"normalize-caps-{name}")
+            if not all((convert, scale, rate, capsfilter)):
+                raise RuntimeError("Rotation caps normalization elements are unavailable")
+            capsfilter.set_property(
+                "caps", Gst.Caps.from_string(_normalized_rotation_caps(width, height))
+            )
+            for element in (convert, scale, rate, capsfilter):
+                source.add(element)
+            if not convert.link(scale) or not scale.link(rate) or not rate.link(capsfilter):
+                raise RuntimeError("Unable to link rotation caps normalization")
+            ghost = Gst.GhostPad.new("src", capsfilter.get_static_pad("src"))
+            ghost.set_active(True)
+            if not source.add_pad(ghost):
+                raise RuntimeError("Unable to expose normalized rotation video")
+            decoder.connect("pad-added", self._on_decoded_normalized_pad, convert)
+        else:
+            decoder.connect("pad-added", self._on_decoded_video_pad, spec.slot_id, source, queue)
+            decoder.connect("pad-removed", self._on_decoded_video_pad_removed, source)
         return source
+
+    def _on_decoded_normalized_pad(self, _: Any, pad: Any, convert: Any) -> None:
+        caps = pad.get_current_caps() or pad.query_caps(None)
+        if not caps or not caps.to_string().startswith("video/"):
+            return
+        sink = convert.get_static_pad("sink")
+        if not sink.is_linked() and pad.link(sink) != self.Gst.PadLinkReturn.OK:
+            LOGGER.warning("Could not link decoded rotation video to normalization")
 
     def _select_decoder_factory(
         self, _: Any, __: Any, caps: Any, factory: Any, is_rotation: bool
@@ -869,6 +931,7 @@ class GStreamerRenderer(RendererBackend):
         self._call(self._replace_stream, slot_id, spec, True)
 
     def _replace_stream(self, slot_id: str, spec: StreamSpec, require_prepared: bool = False) -> None:
+        self._normalize_spec_dimensions(spec)
         runtime = self._slots.get(slot_id)
         if runtime is None:
             self._add_stream(spec)
@@ -932,6 +995,10 @@ class GStreamerRenderer(RendererBackend):
         self._apply_geometry(runtime)
         self._apply_label(runtime)
         self._create_source_branch(runtime)
+
+    def _normalize_spec_dimensions(self, spec: StreamSpec) -> None:
+        if spec.is_rotation and self._rotation_normalize_size:
+            spec.source_width, spec.source_height = self._rotation_normalize_size
 
     def move_stream(self, slot_id: str, rect: Rect) -> None:
         self._call(self._change_geometry, slot_id, rect)
@@ -1015,6 +1082,21 @@ class GStreamerRenderer(RendererBackend):
     def _health_snapshot(self) -> dict[str, Any]:
         return {
             "backend": "gstreamer",
+            "rotation_normalize_caps": (
+                _normalized_rotation_caps(*self._rotation_normalize_size)
+                if self._rotation_normalize_size else None
+            ),
+            "rotation_input_caps": {
+                slot_id: {
+                    "active": self._current_pad_caps(runtime.source_queue),
+                    "prepared": self._current_pad_caps(
+                        runtime.prepared.queue if runtime.prepared else None
+                    ),
+                    "selector": self._current_pad_caps(runtime.selector),
+                }
+                for slot_id, runtime in self._slots.items()
+                if runtime.spec.is_rotation
+            },
             "state": "RUNNING" if self._playing else "READY" if self._pipeline is not None else "STOPPED",
             "sink": self._sink.get_factory().get_name() if self._sink else None,
             "output": {"width": self._output_width, "height": self._output_height},
@@ -1312,6 +1394,18 @@ class GStreamerRenderer(RendererBackend):
         if not runtime or not runtime.spec.is_rotation or "not-negotiated" not in reason:
             return
         now = time.monotonic()
+        if now - getattr(runtime, "last_caps_diagnostic_monotonic", 0.0) >= 60:
+            runtime.last_caps_diagnostic_monotonic = now
+            prepared = getattr(runtime, "prepared", None)
+            LOGGER.warning(
+                "Rotation caps at negotiation failure for %s: active=%s prepared=%s "
+                "selector=%s downstream=%s",
+                slot_id,
+                self._current_pad_caps(getattr(runtime, "source_queue", None)),
+                self._current_pad_caps(prepared.queue if prepared else None),
+                self._current_pad_caps(getattr(runtime, "selector", None)),
+                self._current_pad_caps(getattr(runtime, "capsfilter", None)),
+            )
         last = runtime.last_negotiation_failure_monotonic
         if last is None or now - last > 60:
             runtime.negotiation_failure_started_monotonic = now
@@ -1330,6 +1424,17 @@ class GStreamerRenderer(RendererBackend):
             slot_id, "persistent rotation negotiation errors",
             allow_healthy_others=True, cooldown_seconds=1800,
         )
+
+    @staticmethod
+    def _current_pad_caps(element: Any) -> str:
+        if element is None:
+            return "none"
+        try:
+            pad = element.get_static_pad("src")
+            caps = pad.get_current_caps() if pad else None
+            return caps.to_string() if caps else "none"
+        except (AttributeError, RuntimeError):
+            return "none"
 
     def _mark_prepared_unavailable(self, slot_id: str) -> None:
         runtime = self._slots.get(slot_id)

@@ -3,8 +3,44 @@ from __future__ import annotations
 import time
 from types import SimpleNamespace
 
+import pytest
+
 from mosaivue.renderer.base import HealthState, Rect, StreamSpec
-from mosaivue.renderer.gstreamer import GStreamerRenderer, _request_selector_pad
+from mosaivue.renderer.gstreamer import (
+    GStreamerRenderer,
+    _normalized_rotation_caps,
+    _request_selector_pad,
+    _rotation_normalize_size,
+)
+
+
+def test_rotation_caps_normalization_is_explicit_and_keeps_even_dimensions() -> None:
+    assert _rotation_normalize_size(None) is None
+    assert _rotation_normalize_size("640x360") == (640, 360)
+    assert _normalized_rotation_caps(640, 360) == (
+        "video/x-raw,format=I420,width=640,height=360,"
+        "framerate=15/1,pixel-aspect-ratio=1/1"
+    )
+    for invalid in ("640", "641x360", "640x361", "64x36", "9999x9999"):
+        with pytest.raises(ValueError):
+            _rotation_normalize_size(invalid)
+
+
+def test_rotation_normalization_uses_common_caps_dimensions_for_geometry() -> None:
+    renderer = object.__new__(GStreamerRenderer)
+    renderer._rotation_normalize_size = (640, 360)
+    rotation = StreamSpec(
+        slot_id="rotation", camera_id="garage", camera_name="Garage", url="rtsp://example.invalid",
+        rect=Rect(0, 0, 480, 360), source_width=1024, source_height=576, is_rotation=True,
+    )
+    fixed = StreamSpec(
+        slot_id="fixed", camera_id="se", camera_name="SE", url="rtsp://example.invalid",
+        rect=Rect(480, 0, 480, 360), source_width=1024, source_height=576,
+    )
+    renderer._normalize_spec_dimensions(rotation)
+    renderer._normalize_spec_dimensions(fixed)
+    assert (rotation.source_width, rotation.source_height) == (640, 360)
+    assert (fixed.source_width, fixed.source_height) == (1024, 576)
 
 
 def test_initial_gstreamer_sources_open_one_at_a_time() -> None:
