@@ -24,6 +24,7 @@ REQUIRED = [
     "ROADMAP.md",
     "install.sh",
     "installer/install-local.sh",
+    "scripts/test-installer-rotation.sh",
     "uninstall.sh",
     "systemd/mosaivue-server.service",
     "systemd/mosaivue-renderer.service",

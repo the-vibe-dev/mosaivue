@@ -6,6 +6,8 @@ All notable changes follow a Keep a Changelog-style format. Version numbers use 
 
 ### Fixed
 
+- The Rockchip installer now enables tested fixed caps for rotating GStreamer cameras when MPP/KMS and normalization plugins are present, with an explicit aspect-ratio target option and rollback of the systemd setting. Camera probing reads codec caps on GStreamer bindings that do not expose `DiscovererVideoInfo.get_codec()`.
+
 - GStreamer rotation preconnects a sequential or reverse camera and switches only after decoded video arrives. A two-camera group keeps both source branches running between cuts, avoiding decoder teardown and a black tile on the tested ROCK Pi 4B+.
 - An active GStreamer rotation source error now requests a switch to its warm alternate through the rotation controller. The bus callback keeps the renderer loop responsive instead of stopping an RTSP decoder there.
 - Failed prepared and fixed GStreamer sources reset on a GStreamer worker thread, so a blocked RTSP shutdown cannot stall the shared video loop. If that reset does not produce frames, a fresh source branch is opened; the retired decoder, queue, and selector pad are then stopped and removed asynchronously instead of accumulating RTSP connections.

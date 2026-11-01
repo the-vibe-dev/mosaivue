@@ -10,6 +10,7 @@ DEV=0
 NON_INTERACTIVE=0
 BIND_ADDRESS=0.0.0.0
 SKIP_PACKAGES=0
+ROTATION_NORMALIZE=auto
 PYTHON_BIN="${MOSAIVUE_PYTHON:-python3}"
 
 usage() {
@@ -21,6 +22,7 @@ Usage: sudo ./installer/install-local.sh [options]
   --prefix PATH           release root (default /opt/mosaivue)
   --bind ADDRESS          web bind address (default 0.0.0.0, explicit LAN mode)
   --skip-packages         do not run apt
+  --rotation-normalize VALUE  auto, off, or even WIDTHxHEIGHT (default auto)
 USAGE
 }
 while (($#)); do
@@ -31,6 +33,7 @@ while (($#)); do
     --prefix) PREFIX="${2:?missing prefix}"; shift ;;
     --bind) BIND_ADDRESS="${2:?missing bind address}"; shift ;;
     --skip-packages) SKIP_PACKAGES=1 ;;
+    --rotation-normalize) ROTATION_NORMALIZE="${2:?missing rotation target}"; shift ;;
     -h|--help) usage; exit 0 ;;
     *) cw_die "Unknown option: $1" ;;
   esac
@@ -41,6 +44,10 @@ cw_require_root
 umask 027
 cw_detect_platform
 cw_validate_os
+case "$ROTATION_NORMALIZE" in
+  auto|off) ;;
+  *) cw_valid_rotation_size "$ROTATION_NORMALIZE" || cw_die "--rotation-normalize requires auto, off, or even WIDTHxHEIGHT within 160x90–1920x1080" ;;
+esac
 VERSION="$(awk -F'"' '/^version =/{print $2; exit}' "$SOURCE_ROOT/pyproject.toml")"
 [[ -n "$VERSION" ]] || cw_die "Could not determine version"
 RELEASE_DIR="$PREFIX/releases/$VERSION"
@@ -100,6 +107,7 @@ restore_failed_install() {
         /etc/systemd/system/mosaivue.target:target \
         /etc/systemd/system/mosaivue-renderer.service.d/rockchip-devices.conf:rockchip-devices.conf \
         /etc/systemd/system/mosaivue-renderer.service.d/gpu-devices.conf:gpu-devices.conf \
+        /etc/systemd/system/mosaivue-renderer.service.d/normalize-rotation.conf:normalize-rotation.conf \
         /usr/lib/tmpfiles.d/mosaivue.conf:tmpfiles.conf; do
         path="${entry%%:*}"; name="${entry##*:}"
         if [[ -f "$BACKUP_DIR/$name" ]]; then
@@ -249,6 +257,7 @@ for entry in \
   /etc/systemd/system/mosaivue.target:target \
   /etc/systemd/system/mosaivue-renderer.service.d/rockchip-devices.conf:rockchip-devices.conf \
   /etc/systemd/system/mosaivue-renderer.service.d/gpu-devices.conf:gpu-devices.conf \
+  /etc/systemd/system/mosaivue-renderer.service.d/normalize-rotation.conf:normalize-rotation.conf \
   /usr/lib/tmpfiles.d/mosaivue.conf:tmpfiles.conf; do
   path="${entry%%:*}"; name="${entry##*:}"
   [[ ! -f "$path" ]] || cp -a "$path" "$BACKUP_DIR/$name"
@@ -376,6 +385,20 @@ if [[ "$GPU_DEVICE_COUNT" -gt 0 ]]; then
 else
   rm -f "$GPU_DEVICE_RULES"
 fi
+ROTATION_RULES=/etc/systemd/system/mosaivue-renderer.service.d/normalize-rotation.conf
+EXISTING_ROTATION=""
+if [[ -f "$ROTATION_RULES" ]]; then
+  EXISTING_ROTATION="$(sed -n 's/^Environment=MOSAIVUE_ROTATION_NORMALIZE=\([0-9][0-9]*x[0-9][0-9]*\)$/\1/p' "$ROTATION_RULES" | head -1)"
+fi
+ROTATION_TARGET="$(cw_rotation_normalize_plan "$ROTATION_NORMALIZE" "$EXISTING_ROTATION")"
+if [[ "$ROTATION_TARGET" == off ]]; then
+  rm -f "$ROTATION_RULES"
+else
+  install -d -m 0755 /etc/systemd/system/mosaivue-renderer.service.d
+  printf '[Service]\nEnvironment=MOSAIVUE_ROTATION_NORMALIZE=%s\n' "$ROTATION_TARGET" >"$ROTATION_RULES"
+  chmod 0644 "$ROTATION_RULES"
+fi
+cw_log "Rotation caps normalization: $ROTATION_TARGET"
 install -m 0644 "$PREFIX/current/systemd/mosaivue.tmpfiles.conf" /usr/lib/tmpfiles.d/mosaivue.conf
 systemd-tmpfiles --create /usr/lib/tmpfiles.d/mosaivue.conf || true
 systemctl daemon-reload
@@ -430,6 +453,7 @@ fi
 printf '  Setup token:  %s\n' "$TOKEN"
 printf '  Terminal UI:  sudo -u mosaivue mosaivue tui\n'
 printf '  Diagnostics:  mosaivue doctor\n\n'
+printf '  Rotation caps: %s\n' "$ROTATION_TARGET"
 printf 'The web service is explicitly bound to %s. Restrict it with a firewall or change /etc/mosaivue/config.json when LAN access is not desired.\n' "$EFFECTIVE_BIND"
 if [[ -n "$PREVIOUS_TARGET" && "$PREVIOUS_TARGET" != "$RELEASE_DIR" ]]; then
   printf 'Previous release retained at %s for rollback.\n' "$PREVIOUS_TARGET"

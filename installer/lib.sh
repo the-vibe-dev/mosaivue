@@ -48,3 +48,41 @@ cw_validate_os() {
 cw_ipv4() {
   hostname -I 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i !~ /^127\./ && $i !~ /:/){print $i; exit}}'
 }
+
+cw_valid_rotation_size() {
+  local value="$1" width height
+  [[ "$value" =~ ^([0-9]{1,4})x([0-9]{1,4})$ ]] || return 1
+  width=$((10#${BASH_REMATCH[1]}))
+  height=$((10#${BASH_REMATCH[2]}))
+  ((width >= 160 && width <= 1920 && width % 2 == 0 &&
+    height >= 90 && height <= 1080 && height % 2 == 0))
+}
+
+cw_rockchip_rotation_capable() {
+  [[ -c /dev/mpp_service || -e /dev/mpp_service ]] || return 1
+  command -v gst-inspect-1.0 >/dev/null || return 1
+  local element
+  for element in mppvideodec kmssink videoconvert videoscale videorate capsfilter; do
+    gst-inspect-1.0 "$element" >/dev/null 2>&1 || return 1
+  done
+}
+
+cw_rotation_normalize_plan() {
+  local requested="$1" existing="${2:-}"
+  case "$requested" in
+    off) printf 'off\n' ;;
+    auto)
+      if [[ -n "$existing" ]] && cw_valid_rotation_size "$existing"; then
+        printf '%s\n' "$existing"
+      elif cw_rockchip_rotation_capable; then
+        printf '640x360\n'
+      else
+        printf 'off\n'
+      fi
+      ;;
+    *)
+      cw_valid_rotation_size "$requested" || cw_die "--rotation-normalize requires auto, off, or even WIDTHxHEIGHT within 160x90–1920x1080"
+      printf '%s\n' "$requested"
+      ;;
+  esac
+}

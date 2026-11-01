@@ -39,6 +39,18 @@ The installer detects OS, architecture, Pi model, kernel, DRM connectors, instal
 
 The decoder probe runs as the `mosaivue` service account. The installer also grants detected NVIDIA device nodes to the sandboxed renderer; DRM and V4L2 device classes and Rockchip MPP devices are covered by their service rules. For H.264, H.265, and JPEG, it enumerates installed GStreamer decoders and tests each with a short synthetic stream. A working hardware decoder is preferred for fixed tiles; a working software decoder is preferred for rotating tiles because long-running hardware decoder switching stalled on the tested ROCK Pi and NVIDIA walls. The installer saves the choices and probe results in `/var/lib/mosaivue/decoder-policy.json`; `mosaivue doctor --json` includes them. Stream health reports the decoder actually selected by GStreamer. The probe tests basic decode and device access; it cannot guarantee that every camera profile or long-running rotation will work. Re-run the installer after changing GPU drivers or GStreamer plugins to refresh the policy and device rules. If no candidate passes, GStreamer retains automatic decoder selection for that codec.
 
+On Rockchip systems with an MPP decoder, KMS sink, and the required GStreamer
+plugins, the installer also normalizes rotating cameras to 640×360 I420 at 15
+fps. This fixed selector format prevented the mixed-resolution rotation failure
+on the tested ROCK Pi 4B+. The default is intended for 16:9 camera groups. For
+another aspect ratio, install with `--rotation-normalize WIDTHxHEIGHT` using
+even dimensions within 160×90–1920×1080. `--rotation-normalize off` disables
+normalization. `auto` is the default and retains an existing valid target on
+upgrade. The installer manages
+`/etc/systemd/system/mosaivue-renderer.service.d/normalize-rotation.conf`,
+includes it in the pre-install snapshot, and restores it if installation fails.
+Other platforms default to off. Verify the displayed camera crops after setup.
+
 On AMD64 Debian 12+ or Ubuntu 24.04+, the release `.deb` can be installed with `sudo apt install ./mosaivue_<version>_amd64.deb`. The package uses the same installer and keeps OS package dependencies in its metadata. ARM devices use the source bootstrap above. The 32-bit Bullseye/OMXPlayer path needs that bootstrap because its OS does not provide Python 3.11 as a Debian package.
 
 ## Bind modes

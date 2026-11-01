@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 import subprocess
 import time
-from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -58,7 +57,7 @@ def probe_stream(url: str, timeout_seconds: int = 10) -> dict[str, Any]:
             structure = caps.get_structure(0) if caps and caps.get_size() else None
             result.update(
                 {
-                    "codec": stream.get_codec() or (structure.get_name() if structure else None),
+                    "codec": structure.get_name() if structure else None,
                     "width": stream.get_width(),
                     "height": stream.get_height(),
                     "framerate": (
