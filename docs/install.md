@@ -150,13 +150,21 @@ sudo /opt/mosaivue/current/installer/update.sh --archive ./mosaivue-0.2.0-source
 
 ## Rollback
 
-The update prints the retained previous release path and the pre-update snapshot under `/var/backups/mosaivue-install-*`. For a manual rollback when the database schema is still compatible, substitute the printed previous release path:
+The update prints the retained previous release path and the pre-update snapshot under `/var/backups/mosaivue-install-*`. For a manual rollback when the database schema is still compatible, substitute both printed paths. Restore the saved rotation setting as well as the release link:
 
 ```bash
 PREVIOUS_RELEASE=/opt/mosaivue/releases/0.1.0b1
+SNAPSHOT=/var/backups/mosaivue-install-YYYYMMDDTHHMMSSZ-PID
+sudo systemctl stop mosaivue-renderer.service mosaivue-server.service
 sudo ln -sfn "$PREVIOUS_RELEASE" /opt/mosaivue/current.rollback
 sudo mv -Tf /opt/mosaivue/current.rollback /opt/mosaivue/current
-sudo systemctl restart mosaivue-renderer.service mosaivue-server.service
+if sudo test -f "$SNAPSHOT/normalize-rotation.conf"; then
+  sudo install -m 0644 "$SNAPSHOT/normalize-rotation.conf" /etc/systemd/system/mosaivue-renderer.service.d/normalize-rotation.conf
+else
+  sudo unlink /etc/systemd/system/mosaivue-renderer.service.d/normalize-rotation.conf 2>/dev/null || true
+fi
+sudo systemctl daemon-reload
+sudo systemctl start mosaivue-renderer.service mosaivue-server.service
 curl -fsS --retry 60 --retry-delay 2 --retry-connrefused http://127.0.0.1:8080/healthz
 ```
 
