@@ -36,5 +36,7 @@ fi
 POST
 chmod 0755 "$STAGE/DEBIAN/postinst" "$STAGE/DEBIAN/postrm"
 dpkg-deb --root-owner-group --build "$STAGE" "$OUT/mosaivue_${VERSION}_${ARCH}.deb"
-sha256sum "$OUT/mosaivue_${VERSION}_${ARCH}.deb" > "$OUT/mosaivue_${VERSION}_${ARCH}.deb.sha256"
+sha256sum "$OUT/mosaivue_${VERSION}_${ARCH}.deb" | \
+  awk -v name="mosaivue_${VERSION}_${ARCH}.deb" '{print $1 "  " name}' \
+  > "$OUT/mosaivue_${VERSION}_${ARCH}.deb.sha256"
 echo "$OUT/mosaivue_${VERSION}_${ARCH}.deb"

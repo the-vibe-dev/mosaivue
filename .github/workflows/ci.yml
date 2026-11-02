@@ -60,6 +60,8 @@ jobs:
       - run: rm -rf src/mosaivue/static && cp -a frontend/dist src/mosaivue/static
       - run: python scripts/check_release.py
       - run: packaging/build-release.sh dist
+      - run: packaging/build-deb.sh dist
+      - run: cd dist && sha256sum -c *.sha256
       - uses: actions/upload-artifact@v4
         with:
           name: mosaivue-source-release

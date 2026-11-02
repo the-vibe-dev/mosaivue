@@ -15,6 +15,7 @@ All notable changes follow a Keep a Changelog-style format. Version numbers use 
 
 ### Fixed
 
+- Debian release checksum files now use the package filename, so verification works after downloading assets from GitHub.
 - The Rockchip installer now enables tested fixed caps for rotating GStreamer cameras when MPP/KMS and normalization plugins are present, with an explicit aspect-ratio target option and rollback of the systemd setting. Camera probing reads codec caps on GStreamer bindings that do not expose `DiscovererVideoInfo.get_codec()`.
 
 - GStreamer rotation preconnects a sequential or reverse camera and switches only after decoded video arrives. A two-camera group keeps both source branches running between cuts, avoiding decoder teardown and a black tile on the tested ROCK Pi 4B+.
