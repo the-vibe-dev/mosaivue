@@ -8,7 +8,7 @@ Mosaivue is a local-first camera-monitor appliance for Raspberry Pi and Linux. I
 
 Mosaivue is designed for Raspberry Pi OS Lite and does not require a desktop session. The control plane, camera credentials, layouts, health data, and previews stay on the appliance. There is no required cloud account, analytics service, or telemetry.
 
-> **Beta status:** v0.1.0b1 is staged privately. The Pi 3B+ ran a seven-feed OMXPlayer wall at 1920×1080 for over 12 days and made more than 69,000 rotation cuts; its updated renderer was still healthy after about seven days. The ROCK Pi 4B+ ran a seven-tile GStreamer/KMS wall at 1920×1080 for over four hours and made more than 1,000 cuts, but later long runs had repeated rotation stalls and renderer restarts. Its two rotating feeds now use verified RTSPS endpoints for another long-run trial. This path is not yet qualified for a public beta. These are site results, not stream-count guarantees. Raspberry Pi 4 and Pi 5 physical output and decode behavior remain unqualified. See [beta notes](docs/beta-release.md).
+> **Beta status:** v0.1.0b1 is released first in the private repository. In a 23-hour sample window, the tested Pi 3B+, ROCK Pi 4B+, and Ubuntu GPU walls each kept seven of seven tiles LIVE with one renderer process and advancing rotation. The ROCK Pi's installer-managed 640×360 normalization kept its two 16:9 rotating feeds on matching caps through more than 5,500 cuts; one fixed tile recovered from a cold-start retry. These are site results, not stream-count guarantees. Other camera aspect ratios and Raspberry Pi 4/5 physical output remain unqualified. See [beta notes](docs/beta-release.md).
 
 ## What is included
 
@@ -64,7 +64,7 @@ MOSAIVUE_SCREENSHOT_URL=http://127.0.0.1:8080 \
 | Raspberry Pi 5, 64-bit Raspberry Pi OS Lite | Primary | DRM/KMS or GL/Wayland sink selected from detected capabilities |
 | Raspberry Pi 4, 64-bit Raspberry Pi OS Lite | Primary | Prefer H.264 substreams where that best matches available decode support |
 | Raspberry Pi 3B+ with Bullseye 32-bit and OMXPlayer | Tested beta path | One site ran seven live feeds at 1920×1080 for over 12 days; other camera mixes need measurement |
-| ROCK Pi 4B+ | Tested beta path | Debian 12 arm64, Rockchip MPP, `kmssink`: one seven-tile real-camera wall ran at 1920×1080 for over four hours; cold starts and other camera mixes still need qualification |
+| ROCK Pi 4B+ | Tested beta path | Debian 12 arm64, Rockchip MPP, `kmssink`: one seven-tile 1920×1080 wall completed a 23-hour sampled run with a 16:9 rotating pair; other camera mixes need qualification |
 | Debian/Ubuntu ARM64 | Supported | Hardware decode depends on board and installed GStreamer plugins |
 | Debian/Ubuntu x86_64 | Supported | Useful for development and Intel/AMD appliance builds |
 
@@ -72,7 +72,17 @@ Mosaivue never hard-codes a stream-count promise. Run `mosaivue benchmark` and f
 
 ## Clean installation
 
-For a published beta release, download the bootstrap installer and run it:
+For the private prerelease, authenticate GitHub CLI with repository access and download the verified source archive:
+
+```bash
+gh release download v0.1.0b1 -R the-vibe-dev/mosaivue -p 'mosaivue-0.1.0b1-source.tar.gz*'
+sha256sum -c mosaivue-0.1.0b1-source.tar.gz.sha256
+tar -xzf mosaivue-0.1.0b1-source.tar.gz
+cd mosaivue-0.1.0b1
+sudo ./install.sh
+```
+
+After the repository and release are public, the bootstrap installer supports anonymous downloads:
 
 ```bash
 sudo apt-get update && sudo apt-get install -y curl ca-certificates && curl -fsSLo mosaivue-install.sh https://raw.githubusercontent.com/the-vibe-dev/mosaivue/main/install.sh && sudo bash mosaivue-install.sh

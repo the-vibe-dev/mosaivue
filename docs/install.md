@@ -27,6 +27,16 @@ sudo apt-get update && sudo apt-get install -y curl ca-certificates && curl -fsS
 
 The command installs the download prerequisites first. The bootstrap then supplies Python if the image lacks it, downloads the newest published Mosaivue source release, verifies its SHA-256 checksum, installs the remaining dependencies, and starts the appliance. It prints the local setup URL and one-time administrator token. Anonymous downloads require a public release; for private staging or an offline archive, use the local source install below.
 
+For a release in the private GitHub repository, use an authenticated GitHub CLI on the target, then verify the downloaded archive before running its installer:
+
+```bash
+gh release download v0.1.0b1 -R the-vibe-dev/mosaivue -p 'mosaivue-0.1.0b1-source.tar.gz*'
+sha256sum -c mosaivue-0.1.0b1-source.tar.gz.sha256
+tar -xzf mosaivue-0.1.0b1-source.tar.gz
+cd mosaivue-0.1.0b1
+sudo ./install.sh
+```
+
 ## Native appliance install
 
 ```bash
