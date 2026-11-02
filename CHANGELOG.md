@@ -2,7 +2,16 @@
 
 All notable changes follow a Keep a Changelog-style format. Version numbers use semantic versioning after the first stable release.
 
-## Unreleased
+## [0.1.0b1] - 2026-11-02
+
+### Added
+
+- OMXPlayer selection for legacy Pi hardware in setup, dashboard, renderer API, and configuration.
+- RTSPS camera URLs through camera storage, playback, probing, and previews.
+- Supplied Mosaivue wordmark, PNG favicon, and coordinated light dashboard and editor styling.
+- Featured-first templates for two through ten cameras and click-to-place tile editing with eight resize handles.
+- Standalone curl installer with release checksums and a pinned Python 3.11 runtime for 32-bit Bullseye Pi OS.
+- Beta scope, hardware evidence, and security boundaries in the public documentation.
 
 ### Fixed
 
@@ -22,19 +31,6 @@ All notable changes follow a Keep a Changelog-style format. Version numbers use 
 - The web server starts serving requests before its hardware capability refresh finishes, reducing dashboard startup delay on the tested Pi 3B+.
 - GStreamer RTSPS sources can use an app-scoped PEM CA file through `rtsp_tls_ca_file`, allowing private NVR certificates to be validated when the URL uses a matching hostname.
 
-## [0.1.0b1] - 2026-10-07
-
-### Added
-
-- OMXPlayer selection for legacy Pi hardware in setup, dashboard, renderer API, and configuration.
-- RTSPS camera URLs through camera storage, playback, probing, and previews.
-- Supplied Mosaivue wordmark, PNG favicon, and coordinated light dashboard and editor styling.
-- Featured-first templates for two through ten cameras and click-to-place tile editing with eight resize handles.
-- Standalone curl installer with release checksums and a pinned Python 3.11 runtime for 32-bit Bullseye Pi OS.
-- Beta scope, hardware evidence, and security boundaries in the public documentation.
-
-### Fixed
-
 - Layout creation, camera drag and drop, templates, and slot IDs on HTTP appliance pages.
 - Preview aspect modes and an FFmpeg retry when GStreamer thumbnail capture fails.
 - Legacy OMXPlayer aspect selection and rotation handoff. The next player is prepared offscreen below the current overlay, then positioned and raised for a cut. A failed preparation keeps the current camera visible.
@@ -42,6 +38,10 @@ All notable changes follow a Keep a Changelog-style format. Version numbers use 
 - The rotation timer prepares the next sequential camera during the interval; preload is bounded to one extra decoder.
 - Backend-aware DRM messages, honest VLC availability, and a security audit that accepts the service-owned 0640 key while checking database permissions.
 - Full product and system rename to Mosaivue, with test Pi database and credential-key migration and rollback.
+
+### Security
+
+- Update the minimum `cryptography` version to 50.0.2 so installer builds can receive patched OpenSSL and cryptography fixes. Require HTTPS for update checks, verify OMXPlayer's D-Bus address file owner and mode, and restrict the renderer RPC socket to the service account.
 
 ## Initial implementation (internal) - 2026-10-02
 
@@ -61,7 +61,6 @@ All notable changes follow a Keep a Changelog-style format. Version numbers use 
 
 ### Security
 
-- Update the minimum `cryptography` version to 50.0.2 so installer builds can receive patched OpenSSL and cryptography fixes. Require HTTPS for update checks, verify OMXPlayer's D-Bus address file owner and mode, and restrict the renderer RPC socket to the service account.
 
 - AES-256-GCM credential storage with a locally generated 256-bit key.
 - Scrypt password hashing and encrypted-backup key derivation.
