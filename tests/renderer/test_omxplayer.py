@@ -6,6 +6,23 @@ from mosaivue.renderer.base import HealthState, Rect, StreamHealth, StreamSpec
 from mosaivue.renderer.omxplayer import OmxPlayerRenderer, _Player
 
 
+def test_omxplayer_bus_address_requires_owned_regular_file(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("mosaivue.renderer.omxplayer.tempfile.gettempdir", lambda: str(tmp_path))
+    address = tmp_path / "omxplayerdbus.mosaivue"
+    address.write_text("unix:path=/run/user/1000/bus\n", encoding="utf-8")
+    address.chmod(0o640)
+    assert OmxPlayerRenderer._bus_env()["DBUS_SESSION_BUS_ADDRESS"] == "unix:path=/run/user/1000/bus"
+
+    address.chmod(0o666)
+    with pytest.raises(OSError):
+        OmxPlayerRenderer._bus_env()
+
+    address.unlink()
+    address.symlink_to(tmp_path / "other-file")
+    with pytest.raises(OSError):
+        OmxPlayerRenderer._bus_env()
+
+
 def _spec(url: str, aspect_mode: str) -> StreamSpec:
     return StreamSpec(
         slot_id="slot-1", camera_id="camera-1", camera_name="Camera",

@@ -4,8 +4,9 @@ import asyncio
 import json
 import logging
 import os
+from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 from ..constants import RENDERER_SOCKET_PATH
 
@@ -26,7 +27,7 @@ class RendererRPCClient:
             reader, writer = await asyncio.wait_for(
                 asyncio.open_unix_connection(str(self.socket_path)), timeout=self.timeout
             )
-        except (OSError, asyncio.TimeoutError) as exc:
+        except (OSError, TimeoutError) as exc:
             raise RendererRPCError(f"Renderer service is unavailable: {exc}") from exc
         try:
             request = json.dumps({"action": action, "params": params}, separators=(",", ":")) + "\n"
@@ -61,7 +62,7 @@ class RendererRPCServer:
         self.socket_path.parent.mkdir(parents=True, exist_ok=True)
         self.socket_path.unlink(missing_ok=True)
         self.server = await asyncio.start_unix_server(self._handle, path=str(self.socket_path))
-        os.chmod(self.socket_path, 0o660)
+        os.chmod(self.socket_path, 0o600)
 
     async def close(self) -> None:
         if self.server:

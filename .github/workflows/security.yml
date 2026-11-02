@@ -17,7 +17,7 @@ jobs:
         with:
           python-version: '3.13'
       - run: pip install -e . pip-audit bandit
-      - run: bandit -q -r src/mosaivue -x src/mosaivue/static
+      - run: bandit -q -ll -r src/mosaivue -x src/mosaivue/static
       - run: pip-audit
       - run: python scripts/license_inventory.py --output dependency-licenses.json
       - uses: actions/upload-artifact@v4

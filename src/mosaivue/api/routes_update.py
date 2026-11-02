@@ -1,15 +1,14 @@
 from __future__ import annotations
 
-import json
 import os
-import urllib.error
-import urllib.request
+from urllib.parse import urlsplit
 
+import httpx
 from fastapi import APIRouter, HTTPException
 
 from .. import __version__
 from ..config import load_settings
-from .dependencies import Auth, CSRF
+from .dependencies import CSRF, Auth
 
 router = APIRouter(prefix="/update", tags=["updates"])
 
@@ -28,12 +27,25 @@ def check_update(_: Auth) -> dict[str, object]:
             "update_available": False,
             "message": "Set MOSAIVUE_RELEASE_API to the project's GitHub latest-release API URL after publication.",
         }
-    request = urllib.request.Request(api_url, headers={"Accept": "application/vnd.github+json", "User-Agent": f"mosaivue/{__version__}"})
     try:
-        with urllib.request.urlopen(request, timeout=5) as response:
-            document = json.load(response)
-    except (OSError, urllib.error.URLError, json.JSONDecodeError) as exc:
-        raise HTTPException(status_code=502, detail=f"Update check failed: {exc}") from exc
+        parsed = urlsplit(api_url)
+    except ValueError as exc:
+        raise HTTPException(status_code=502, detail="Update check requires an HTTPS release API URL") from exc
+    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+        raise HTTPException(status_code=502, detail="Update check requires an HTTPS release API URL")
+    try:
+        response = httpx.get(
+            api_url,
+            headers={"Accept": "application/vnd.github+json", "User-Agent": f"mosaivue/{__version__}"},
+            timeout=5,
+            follow_redirects=False,
+        )
+        response.raise_for_status()
+        document = response.json()
+        if not isinstance(document, dict):
+            raise ValueError("Release API did not return an object")
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(status_code=502, detail=f"Update check failed: {type(exc).__name__}") from exc
     latest = str(document.get("tag_name", "")).lstrip("v")
     return {
         "enabled": True,

@@ -5,9 +5,12 @@ import logging
 import os
 import shutil
 import signal
+import stat
 import subprocess
+import tempfile
 import threading
 import time
+from contextlib import suppress
 from dataclasses import dataclass, replace
 from typing import Any
 from urllib.parse import urlsplit
@@ -133,10 +136,8 @@ class OmxPlayerRenderer(RendererBackend):
                 os.killpg(player.process.pid, signal.SIGTERM)
                 player.process.wait(timeout=3)
             except (ProcessLookupError, subprocess.TimeoutExpired):
-                try:
+                with suppress(ProcessLookupError):
                     os.killpg(player.process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
                 player.process.wait(timeout=3)
 
     def add_stream(self, spec: StreamSpec) -> None:
@@ -310,8 +311,19 @@ class OmxPlayerRenderer(RendererBackend):
 
     @staticmethod
     def _bus_env() -> dict[str, str]:
-        with open("/tmp/omxplayerdbus.mosaivue", encoding="utf-8") as handle:
-            return dict(os.environ, DBUS_SESSION_BUS_ADDRESS=handle.read().strip())
+        path = os.path.join(tempfile.gettempdir(), "omxplayerdbus.mosaivue")
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        try:
+            details = os.fstat(descriptor)
+            if not stat.S_ISREG(details.st_mode) or details.st_uid != os.geteuid() or details.st_mode & 0o022:
+                raise OSError("OMXPlayer D-Bus address file has an unexpected owner or type")
+            with os.fdopen(descriptor, encoding="utf-8", closefd=False) as handle:
+                address = handle.read(4096).strip()
+        finally:
+            os.close(descriptor)
+        if not address:
+            raise OSError("OMXPlayer D-Bus address file is empty")
+        return dict(os.environ, DBUS_SESSION_BUS_ADDRESS=address)
 
     def _playback_status(self, player: _Player) -> bool:
         try:

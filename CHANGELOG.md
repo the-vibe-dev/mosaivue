@@ -61,6 +61,8 @@ All notable changes follow a Keep a Changelog-style format. Version numbers use 
 
 ### Security
 
+- Update the minimum `cryptography` version to 50.0.2 so installer builds can receive patched OpenSSL and cryptography fixes. Require HTTPS for update checks, verify OMXPlayer's D-Bus address file owner and mode, and restrict the renderer RPC socket to the service account.
+
 - AES-256-GCM credential storage with a locally generated 256-bit key.
 - Scrypt password hashing and encrypted-backup key derivation.
 - Secret redaction for logs, support bundles, API outputs, and default exports.
