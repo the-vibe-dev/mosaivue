@@ -15,7 +15,7 @@
     "licenseListVersion": "3.25"
   },
   "dataLicense": "CC0-1.0",
-  "documentNamespace": "https://github.com/the-vibe-dev/mosaivue/spdx/0.1.0b1",
+  "documentNamespace": "https://github.com/the-vibe-dev/mosaivue/spdx/0.1.0b2",
   "missingFromBuildEnvironment": [],
   "name": "Mosaivue Python runtime dependency inventory",
   "packages": [
@@ -27,7 +27,7 @@
       "licenseConcluded": "Apache-2.0",
       "licenseDeclared": "Apache-2.0",
       "name": "mosaivue",
-      "versionInfo": "0.1.0b1"
+      "versionInfo": "0.1.0b2"
     },
     {
       "SPDXID": "SPDXRef-Package-alembic",

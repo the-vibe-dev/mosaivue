@@ -231,3 +231,7 @@ The scheduled Security and licenses workflow failed on the previous candidate be
 An isolated Debian 12 chroot upgraded through the normal source installer with the new dependency constraint and an explicit 800×600 rotation target. Its installed virtual environment reported cryptography 50.0.2, and the previous release remained available for rollback. The refreshed SPDX inventory lists 37 runtime packages, including cryptography 50.0.2, with none missing from the build environment.
 
 Private CI and the Security and licenses workflow both passed on code commit `7e48d64`. CI completed Python 3.11/3.12/3.13, frontend, and release artifact jobs; the security workflow completed Bandit, `pip-audit`, and license inventory. The source archive and AMD64 Debian package built from that commit passed their SHA-256 checks, the archive passed a Gitleaks scan, and the release checker passed.
+
+## 2026-11-02 public beta version preparation
+
+Version `0.1.0b2` changes release metadata, the asset cache key, and public installation documentation after the private `0.1.0b1` staging release. Renderer and installer behavior is unchanged. The Python suite passed 73 tests with one browser test skipped, and frontend typecheck, build, and three Node tests passed. The generated UI, OpenAPI snapshot, and SPDX inventory now identify `0.1.0b2`. A Git-history Gitleaks scan found zero findings, no private runtime credential file is tracked in current files or Git history, and the three documentation screenshots use demo labels and blank camera tiles.

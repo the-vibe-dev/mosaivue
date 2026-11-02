@@ -19,29 +19,19 @@ over the base config file.
 
 ## Curl install
 
-After a public beta release is published, run this on the target device:
+For the public beta, run this on the target device:
 
 ```bash
 sudo apt-get update && sudo apt-get install -y curl ca-certificates && curl -fsSLo mosaivue-install.sh https://raw.githubusercontent.com/the-vibe-dev/mosaivue/main/install.sh && sudo bash mosaivue-install.sh
 ```
 
-The command installs the download prerequisites first. The bootstrap then supplies Python if the image lacks it, downloads the newest published Mosaivue source release, verifies its SHA-256 checksum, installs the remaining dependencies, and starts the appliance. It prints the local setup URL and one-time administrator token. Anonymous downloads require a public release; for private staging or an offline archive, use the local source install below.
-
-For a release in the private GitHub repository, use an authenticated GitHub CLI on the target, then verify the downloaded archive before running its installer:
-
-```bash
-gh release download v0.1.0b1 -R the-vibe-dev/mosaivue -p 'mosaivue-0.1.0b1-source.tar.gz*'
-sha256sum -c mosaivue-0.1.0b1-source.tar.gz.sha256
-tar -xzf mosaivue-0.1.0b1-source.tar.gz
-cd mosaivue-0.1.0b1
-sudo ./install.sh
-```
+The command installs the download prerequisites first. The bootstrap then supplies Python if the image lacks it, downloads the newest published Mosaivue source release, verifies its SHA-256 checksum, installs the remaining dependencies, and starts the appliance. It prints the local setup URL and one-time administrator token. For an offline archive, use the local source install below.
 
 ## Native appliance install
 
 ```bash
-tar -xzf mosaivue-0.1.0b1-source.tar.gz
-cd mosaivue-0.1.0b1
+tar -xzf mosaivue-0.1.0b2-source.tar.gz
+cd mosaivue-0.1.0b2
 sudo ./install.sh
 ```
 

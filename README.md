@@ -8,7 +8,7 @@ Mosaivue is a local-first camera-monitor appliance for Raspberry Pi and Linux. I
 
 Mosaivue is designed for Raspberry Pi OS Lite and does not require a desktop session. The control plane, camera credentials, layouts, health data, and previews stay on the appliance. There is no required cloud account, analytics service, or telemetry.
 
-> **Beta status:** v0.1.0b1 is released first in the private repository. In a 23-hour sample window, the tested Pi 3B+, ROCK Pi 4B+, and Ubuntu GPU walls each kept seven of seven tiles LIVE with one renderer process and advancing rotation. The ROCK Pi's installer-managed 640×360 normalization kept its two 16:9 rotating feeds on matching caps through more than 5,500 cuts; one fixed tile recovered from a cold-start retry. These are site results, not stream-count guarantees. Other camera aspect ratios and Raspberry Pi 4/5 physical output remain unqualified. See [beta notes](docs/beta-release.md).
+> **Beta status:** v0.1.0b2 is the first public beta. In a 23-hour sample window, the tested Pi 3B+, ROCK Pi 4B+, and Ubuntu GPU walls each kept seven of seven tiles LIVE with one renderer process and advancing rotation. The ROCK Pi's installer-managed 640×360 normalization kept its two 16:9 rotating feeds on matching caps through more than 5,500 cuts; one fixed tile recovered from a cold-start retry. These are site results, not stream-count guarantees. Other camera aspect ratios and Raspberry Pi 4/5 physical output remain unqualified. See [beta notes](docs/beta-release.md).
 
 ## What is included
 
@@ -72,17 +72,7 @@ Mosaivue never hard-codes a stream-count promise. Run `mosaivue benchmark` and f
 
 ## Clean installation
 
-For the private prerelease, authenticate GitHub CLI with repository access and download the verified source archive:
-
-```bash
-gh release download v0.1.0b1 -R the-vibe-dev/mosaivue -p 'mosaivue-0.1.0b1-source.tar.gz*'
-sha256sum -c mosaivue-0.1.0b1-source.tar.gz.sha256
-tar -xzf mosaivue-0.1.0b1-source.tar.gz
-cd mosaivue-0.1.0b1
-sudo ./install.sh
-```
-
-After the repository and release are public, the bootstrap installer supports anonymous downloads:
+For the public beta, download the bootstrap installer and run it:
 
 ```bash
 sudo apt-get update && sudo apt-get install -y curl ca-certificates && curl -fsSLo mosaivue-install.sh https://raw.githubusercontent.com/the-vibe-dev/mosaivue/main/install.sh && sudo bash mosaivue-install.sh
@@ -93,8 +83,8 @@ It downloads a versioned source release, verifies its SHA-256 checksum, and runs
 To install a source archive directly:
 
 ```bash
-tar -xzf mosaivue-0.1.0b1-source.tar.gz
-cd mosaivue-0.1.0b1
+tar -xzf mosaivue-0.1.0b2-source.tar.gz
+cd mosaivue-0.1.0b2
 sudo ./install.sh
 ```
 
@@ -120,7 +110,7 @@ Mosaivue installed successfully.
   Diagnostics:  mosaivue doctor
 ```
 
-The bootstrap script can be inspected before the `sudo bash` step. Published beta releases are required for anonymous downloads; private staging uses the source archive.
+The bootstrap script can be inspected before the `sudo bash` step. It downloads the newest public release archive and checks its SHA-256 checksum before installing.
 
 ## First camera wall
 

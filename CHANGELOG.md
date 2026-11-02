@@ -2,6 +2,12 @@
 
 All notable changes follow a Keep a Changelog-style format. Version numbers use semantic versioning after the first stable release.
 
+## [0.1.0b2] - 2026-11-02
+
+### Changed
+
+- First public beta release following private `0.1.0b1` staging, with public installation instructions and updated package metadata. Renderer and installer behavior is unchanged from the private beta.
+
 ## [0.1.0b1] - 2026-11-02
 
 ### Added

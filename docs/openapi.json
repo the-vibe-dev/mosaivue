@@ -1810,7 +1810,7 @@
   "info": {
     "description": "Local-first RTSP camera wall control plane",
     "title": "Mosaivue API",
-    "version": "0.1.0b1"
+    "version": "0.1.0b2"
   },
   "openapi": "3.1.0",
   "paths": {

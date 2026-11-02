@@ -1,6 +1,6 @@
-# Public beta candidate: v0.1.0b1
+# Public beta: v0.1.0b2
 
-This document records what is ready to stage privately and what remains unqualified before making the repository or a release public. The planned release tag is `v0.1.0b1`; the Python package version is `0.1.0b1`.
+This document records the tested hardware scope and remaining limits for public beta `v0.1.0b2`. It follows the private `v0.1.0b1` staging release with the same renderer and installer behavior.
 
 ## Tested path
 
@@ -39,16 +39,16 @@ This document records what is ready to stage privately and what remains unqualif
 - LAN HTTP, local access to the `mosaivue` service account, and legacy OMXPlayer process arguments are trust boundaries. See [security design](security.md).
 - The beta has no universal stream-count or latency guarantee. Record camera codec, resolution, frame rate, decoder, sink, CPU, and temperature for each hardware claim.
 
-## Private staging and publication gate
+## Beta publication checks
 
-1. Keep the staging repository private while reviewing source, screenshots, license inventory, generated OpenAPI, and built archives for site credentials or private deployment files.
+1. Review the source, screenshots, license inventory, generated OpenAPI, built archives, and Git history for credentials or private deployment files.
 2. Confirm the Python package version, Git tag, changelog, source archive name, and GitHub prerelease flag agree.
 3. CI and the Security and licenses workflow passed on the staged code commit `7e48d64`. The installer/bootstrap, Debian 12 source install, rollback failure injection, `.deb` build, frontend checks, release checker, and three-wall overnight matrix have passed locally or on the appliances. The `cryptography` constraint now permits patched version 50.0.2, which passed the dependency audit.
 4. Confirm the final source archive and checksums after any last documentation or dependency changes. The ROCK Pi rotation overnight gate passed on the installer-managed build; repeat on other camera aspect ratios or hardware before making broader claims.
 5. Review the [security policy](../SECURITY.md) and [third-party notices](../THIRD_PARTY_NOTICES.md), especially the external OMXPlayer and FFmpeg dependencies.
-6. Publish a public repository or prerelease only after the staged commit and artifacts have been reviewed. The release workflow creates a prerelease for beta tags; staging a branch does not create a tag or release.
+6. Publish the public prerelease after the tagged commit and attached assets pass checksum and secret scans. The release workflow creates a prerelease for beta tags.
 
-The new Mosaivue repository is staged privately first. Its CI must pass before public publication; local checks and Pi results are recorded in [Build verification](../BUILD-VERIFICATION.md).
+The private `v0.1.0b1` release established the installation and hardware evidence. CI must pass for `v0.1.0b2` before public publication; local checks and Pi results are recorded in [Build verification](../BUILD-VERIFICATION.md).
 
 ## Feedback to request from beta users
 
