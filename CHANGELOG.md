@@ -2,6 +2,12 @@
 
 All notable changes follow a Keep a Changelog-style format. Version numbers use semantic versioning after the first stable release.
 
+## Unreleased
+
+### Fixed
+
+- A rotating GStreamer tile with blocked RTSP branch teardown now continues recovery despite sporadic decoded frames and recycles its renderer after two minutes of blockage if the tile remains STALLED. This prevents a recent frame timestamp from postponing the recovery indefinitely.
+
 ## [0.1.0b2] - 2026-11-02
 
 ### Changed

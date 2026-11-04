@@ -339,7 +339,7 @@ def test_startup_rotation_failure_retries_its_tile_before_wall_recycle(monkeypat
         )
     }
     renderer._health = {
-        "rotation": SimpleNamespace(last_frame_monotonic=None)
+        "rotation": SimpleNamespace(state=HealthState.stalled, last_frame_monotonic=None)
     }
     scheduled = []
     retried = []
@@ -357,6 +357,36 @@ def test_startup_rotation_failure_retries_its_tile_before_wall_recycle(monkeypat
     assert len(scheduled) == 2
 
 
+def test_recent_frame_does_not_cancel_stalled_rotation_recovery(monkeypatch, tmp_path) -> None:
+    renderer = object.__new__(GStreamerRenderer)
+    now = time.monotonic()
+    renderer._started_at = now - 90
+    renderer._slots = {
+        "rotation": SimpleNamespace(
+            prepared=SimpleNamespace(ready=False, last_frame_monotonic=None),
+            recovery_source_id=None, restarting=False,
+            source_refresh_source_id=None, reconnect_source_id=None,
+        )
+    }
+    renderer._health = {
+        "rotation": SimpleNamespace(state=HealthState.stalled, last_frame_monotonic=now - 1),
+        "fixed": SimpleNamespace(state=HealthState.live, last_frame_monotonic=now),
+    }
+    scheduled = []
+    renderer.GLib = SimpleNamespace(
+        timeout_add_seconds=lambda _, callback: scheduled.append(callback) or 1
+    )
+    retried = []
+    renderer._restart_stream = retried.append
+    monkeypatch.setenv("MOSAIVUE_DATA_DIR", str(tmp_path))
+
+    renderer._arm_rotation_recovery("rotation")
+    scheduled.pop(0)()
+
+    assert retried == ["rotation"]
+    assert len(scheduled) == 1
+
+
 def test_rotation_stalled_for_two_minutes_recycles_with_healthy_fixed_tiles(
     monkeypatch, tmp_path
 ) -> None:
@@ -372,7 +402,7 @@ def test_rotation_stalled_for_two_minutes_recycles_with_healthy_fixed_tiles(
         )
     }
     renderer._health = {
-        "rotation": SimpleNamespace(last_frame_monotonic=now - 121),
+        "rotation": SimpleNamespace(state=HealthState.stalled, last_frame_monotonic=now - 121),
         "fixed": SimpleNamespace(state=HealthState.live, last_frame_monotonic=now),
     }
     scheduled = []
@@ -577,8 +607,9 @@ def test_rotation_negotiation_recovery_resets_after_quiet_minute(monkeypatch) ->
 
 def test_blocked_rotation_teardown_recycles_only_after_sustained_stall(monkeypatch, tmp_path) -> None:
     renderer = object.__new__(GStreamerRenderer)
-    now = time.monotonic()
-    renderer._started_at = now - 300
+    clock = [1000.0]
+    monkeypatch.setattr("mosaivue.renderer.gstreamer.time.monotonic", lambda: clock[0])
+    renderer._started_at = 700.0
     prepared = SimpleNamespace(ready=False, last_frame_monotonic=None)
     runtime = SimpleNamespace(
         prepared=prepared, prepared_refresh_source_id=None,
@@ -586,8 +617,8 @@ def test_blocked_rotation_teardown_recycles_only_after_sustained_stall(monkeypat
     )
     renderer._slots = {"rotation": runtime}
     renderer._health = {
-        "rotation": SimpleNamespace(state=HealthState.stalled, last_frame_monotonic=now - 119),
-        "fixed": SimpleNamespace(state=HealthState.live, last_frame_monotonic=now),
+        "rotation": SimpleNamespace(state=HealthState.stalled, last_frame_monotonic=999.0),
+        "fixed": SimpleNamespace(state=HealthState.live, last_frame_monotonic=1000.0),
     }
     scheduled = []
     renderer.GLib = SimpleNamespace(
@@ -602,7 +633,9 @@ def test_blocked_rotation_teardown_recycles_only_after_sustained_stall(monkeypat
     assert exits == []
     assert runtime.prepared is prepared
 
-    renderer._health["rotation"].last_frame_monotonic = now - 121
+    clock[0] = 1121.0
+    renderer._health["rotation"].last_frame_monotonic = 1120.0
+    renderer._health["fixed"].last_frame_monotonic = 1121.0
     scheduled.pop(0)()
     assert exits == [75]
     assert (tmp_path / "rotation-recovery.stamp").exists()
@@ -612,7 +645,9 @@ def test_blocked_rotation_teardown_recycles_only_after_sustained_stall(monkeypat
 
 def test_blocked_standby_does_not_recycle_live_rotation(monkeypatch, tmp_path) -> None:
     renderer = object.__new__(GStreamerRenderer)
-    renderer._started_at = time.monotonic() - 300
+    clock = [1000.0]
+    monkeypatch.setattr("mosaivue.renderer.gstreamer.time.monotonic", lambda: clock[0])
+    renderer._started_at = 700.0
     prepared = SimpleNamespace(ready=False, last_frame_monotonic=None)
     renderer._slots = {
         "rotation": SimpleNamespace(
@@ -622,7 +657,7 @@ def test_blocked_standby_does_not_recycle_live_rotation(monkeypatch, tmp_path) -
     }
     renderer._health = {
         "rotation": SimpleNamespace(
-            state=HealthState.live, last_frame_monotonic=time.monotonic() - 121,
+            state=HealthState.live, last_frame_monotonic=999.0,
         )
     }
     scheduled = []
@@ -634,6 +669,9 @@ def test_blocked_standby_does_not_recycle_live_rotation(monkeypatch, tmp_path) -
     monkeypatch.setenv("MOSAIVUE_DATA_DIR", str(tmp_path))
 
     renderer._schedule_prepared_refresh("rotation", prepared)
+    scheduled.pop(0)()
+    clock[0] = 1121.0
+    renderer._health["rotation"].last_frame_monotonic = 1120.0
     scheduled.pop(0)()
 
     assert exits == []

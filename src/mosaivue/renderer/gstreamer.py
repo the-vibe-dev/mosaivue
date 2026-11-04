@@ -110,6 +110,7 @@ class _SlotRuntime:
     retired_sources: list[Any] = field(default_factory=list)
     retired_queues: list[Any] = field(default_factory=list)
     retirement_warning_monotonic: float = 0.0
+    blocked_rotation_teardown_started_monotonic: float | None = None
     recovery_warning_monotonic: float = 0.0
     last_caps_diagnostic_monotonic: float = 0.0
     negotiation_failure_started_monotonic: float | None = None
@@ -1273,7 +1274,11 @@ class GStreamerRenderer(RendererBackend):
                 return False
             current.recovery_source_id = None
             health = self._health.get(slot_id)
-            if health and health.last_frame_monotonic and time.monotonic() - health.last_frame_monotonic < 8:
+            if (
+                health and health.state == HealthState.live
+                and health.last_frame_monotonic
+                and time.monotonic() - health.last_frame_monotonic < 8
+            ):
                 return False
             prepared = current.prepared
             if prepared and prepared.ready and prepared.last_frame_monotonic and time.monotonic() - prepared.last_frame_monotonic < 8:
@@ -1466,23 +1471,26 @@ class GStreamerRenderer(RendererBackend):
                 return False
             if len(current.retired_sources) >= 2:
                 now = time.monotonic()
+                blocked_since = getattr(current, "blocked_rotation_teardown_started_monotonic", None)
+                if blocked_since is None:
+                    blocked_since = now
+                    current.blocked_rotation_teardown_started_monotonic = now
                 if now - getattr(current, "retirement_warning_monotonic", 0.0) >= 60:
                     LOGGER.warning("Waiting for retired rotation branches to stop", extra={"slot_id": slot_id})
                     current.retirement_warning_monotonic = now
                 health = self._health.get(slot_id)
                 # A blocked teardown cannot be repaired by another per-slot
-                # retry. Only interrupt the whole wall after this tile has
-                # been visibly stalled for two minutes; protect the healthy
-                # tiles with a much longer recycle cooldown.
-                last_frame = health.last_frame_monotonic if health else None
-                stalled_for = now - (last_frame or self._started_at or now)
-                if health and health.state == HealthState.stalled and stalled_for >= 120:
+                # retry. Intermittent frames do not clear the blocked branches,
+                # so time the blockage itself and recycle only while the tile
+                # is stalled. Protect healthy tiles with a longer cooldown.
+                if health and health.state == HealthState.stalled and now - blocked_since >= 120:
                     self._restart_renderer_with_cooldown(
                         slot_id, "stalled rotation with blocked RTSP teardown",
                         allow_healthy_others=True, cooldown_seconds=1800,
                     )
                 self._schedule_prepared_refresh(slot_id, prepared)
                 return False
+            current.blocked_rotation_teardown_started_monotonic = None
             LOGGER.warning("Opening a fresh prepared rotation source", extra={"slot_id": slot_id})
             self._retire_branch(
                 current, prepared.source, prepared.queue, prepared.selector_pad,

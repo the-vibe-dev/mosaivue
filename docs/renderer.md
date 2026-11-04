@@ -120,8 +120,9 @@ old source and queue on a worker thread, then releases their selector pad and
 removes them from the pipeline. At most two branches may be pending retirement
 per slot; recovery retries once they have been released.
 If both pending retirements remain blocked, the renderer keeps other live tiles
-visible. A rotation tile stalled for two minutes can trigger a whole-renderer
-restart, limited by a longer cooldown. A wall with no recently decoded tiles
+visible. After two minutes of blocked teardown, a still-stalled rotation tile
+can trigger a whole-renderer restart even if sporadic frames arrive. A longer
+cooldown limits repeated wall interruptions. A wall with no recently decoded tiles
 can also restart after its shorter cooldown.
 If repeated RTSP `not-negotiated` errors keep a rotation tile unhealthy for two
 minutes, the same longer-cooldown restart applies even when sporadic frames
