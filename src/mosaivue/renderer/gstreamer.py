@@ -415,12 +415,12 @@ class GStreamerRenderer(RendererBackend):
             if sink:
                 if sink.find_property("sync"):
                     sink.set_property("sync", False)
-                if name == "kmssink" and sink.find_property("force-aspect-ratio"):
-                    # The compositor has already sized every tile inside the
-                    # output canvas. KMS must scan that canvas across the full
-                    # connector mode even when EDID physical dimensions are
-                    # inaccurate, or it can letterbox the entire wall.
-                    sink.set_property("force-aspect-ratio", False)
+                if name == "kmssink" and sink.find_property("fullscreen"):
+                    # Render the complete compositor canvas across the KMS
+                    # mode. The ROCK Pi driver centers a smaller plane when
+                    # fullscreen is left at its default, and disabling aspect
+                    # preservation makes that driver's plane disappear.
+                    sink.set_property("fullscreen", True)
                 if sink.find_property("force-modesetting") and name == "kmssink":
                     sink.set_property("force-modesetting", False)
                 LOGGER.info("Selected GStreamer sink %s", name)

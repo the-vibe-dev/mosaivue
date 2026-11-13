@@ -30,7 +30,7 @@ def test_kms_sink_scans_the_composited_wall_across_the_full_mode() -> None:
     renderer = object.__new__(GStreamerRenderer)
     properties = {}
     sink = SimpleNamespace(
-        find_property=lambda name: name in {"sync", "force-aspect-ratio", "force-modesetting"},
+        find_property=lambda name: name in {"sync", "fullscreen", "force-modesetting"},
         set_property=lambda name, value: properties.__setitem__(name, value),
     )
     renderer.Gst = SimpleNamespace(ElementFactory=SimpleNamespace(make=lambda *_: sink))
@@ -38,7 +38,7 @@ def test_kms_sink_scans_the_composited_wall_across_the_full_mode() -> None:
     assert renderer._make_sink("kmssink") is sink
     assert properties == {
         "sync": False,
-        "force-aspect-ratio": False,
+        "fullscreen": True,
         "force-modesetting": False,
     }
 
