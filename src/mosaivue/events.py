@@ -38,7 +38,7 @@ class EventBus:
             while True:
                 try:
                     yield await asyncio.wait_for(queue.get(), timeout=20)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     yield {"event": "keepalive", "data": None}
         finally:
             async with self._lock:

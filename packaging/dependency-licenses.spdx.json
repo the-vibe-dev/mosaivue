@@ -15,7 +15,7 @@
     "licenseListVersion": "3.25"
   },
   "dataLicense": "CC0-1.0",
-  "documentNamespace": "https://github.com/the-vibe-dev/mosaivue/spdx/0.1.0b2",
+  "documentNamespace": "https://github.com/the-vibe-dev/mosaivue/spdx/0.1.0b3",
   "missingFromBuildEnvironment": [],
   "name": "Mosaivue Python runtime dependency inventory",
   "packages": [
@@ -27,7 +27,7 @@
       "licenseConcluded": "Apache-2.0",
       "licenseDeclared": "Apache-2.0",
       "name": "mosaivue",
-      "versionInfo": "0.1.0b2"
+      "versionInfo": "0.1.0b3"
     },
     {
       "SPDXID": "SPDXRef-Package-alembic",
@@ -38,7 +38,7 @@
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "MIT",
       "name": "alembic",
-      "versionInfo": "1.20.0"
+      "versionInfo": "1.20.1"
     },
     {
       "SPDXID": "SPDXRef-Package-annotated-doc",
@@ -49,7 +49,7 @@
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "MIT",
       "name": "annotated-doc",
-      "versionInfo": "0.0.5"
+      "versionInfo": "0.0.6"
     },
     {
       "SPDXID": "SPDXRef-Package-annotated-types",
@@ -71,7 +71,7 @@
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "MIT",
       "name": "anyio",
-      "versionInfo": "4.15.1"
+      "versionInfo": "4.16.0"
     },
     {
       "SPDXID": "SPDXRef-Package-certifi",
@@ -82,7 +82,7 @@
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "MPL-2.0",
       "name": "certifi",
-      "versionInfo": "2026.10.18"
+      "versionInfo": "2026.10.23"
     },
     {
       "SPDXID": "SPDXRef-Package-cffi",
@@ -104,7 +104,7 @@
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "BSD-3-Clause",
       "name": "click",
-      "versionInfo": "8.5.0"
+      "versionInfo": "8.5.1"
     },
     {
       "SPDXID": "SPDXRef-Package-cryptography",
@@ -118,6 +118,17 @@
       "versionInfo": "50.0.2"
     },
     {
+      "SPDXID": "SPDXRef-Package-defusedxml",
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "homepage": "https://github.com/tiran/defusedxml",
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "PSFL",
+      "name": "defusedxml",
+      "versionInfo": "0.7.1"
+    },
+    {
       "SPDXID": "SPDXRef-Package-fastapi",
       "copyrightText": "NOASSERTION",
       "downloadLocation": "NOASSERTION",
@@ -126,7 +137,7 @@
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "MIT",
       "name": "fastapi",
-      "versionInfo": "0.146.0"
+      "versionInfo": "0.162.5"
     },
     {
       "SPDXID": "SPDXRef-Package-greenlet",
@@ -203,7 +214,7 @@
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "MIT License",
       "name": "markdown-it-py",
-      "versionInfo": "4.2.0"
+      "versionInfo": "4.3.0"
     },
     {
       "SPDXID": "SPDXRef-Package-MarkupSafe",
@@ -236,7 +247,7 @@
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "Apache-2.0",
       "name": "opentelemetry-api",
-      "versionInfo": "1.45.1"
+      "versionInfo": "1.45.2"
     },
     {
       "SPDXID": "SPDXRef-Package-platformdirs",
@@ -247,7 +258,7 @@
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "MIT",
       "name": "platformdirs",
-      "versionInfo": "4.13.5"
+      "versionInfo": "4.14.5"
     },
     {
       "SPDXID": "SPDXRef-Package-psutil",
@@ -269,7 +280,7 @@
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "BSD-3-Clause",
       "name": "pycparser",
-      "versionInfo": "3.11"
+      "versionInfo": "3.12"
     },
     {
       "SPDXID": "SPDXRef-Package-pydantic",
@@ -280,7 +291,7 @@
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "MIT",
       "name": "pydantic",
-      "versionInfo": "2.14.1"
+      "versionInfo": "2.14.3"
     },
     {
       "SPDXID": "SPDXRef-Package-pydantic-core",
@@ -291,7 +302,7 @@
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "MIT",
       "name": "pydantic_core",
-      "versionInfo": "2.50.1"
+      "versionInfo": "2.50.4"
     },
     {
       "SPDXID": "SPDXRef-Package-Pygments",
@@ -313,7 +324,7 @@
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "Apache-2.0",
       "name": "python-multipart",
-      "versionInfo": "0.0.32"
+      "versionInfo": "0.0.33"
     },
     {
       "SPDXID": "SPDXRef-Package-PyYAML",
@@ -368,7 +379,7 @@
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "BSD-3-Clause",
       "name": "starlette",
-      "versionInfo": "1.9.0"
+      "versionInfo": "1.10.0"
     },
     {
       "SPDXID": "SPDXRef-Package-textual",
@@ -390,7 +401,7 @@
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "MIT",
       "name": "typer",
-      "versionInfo": "0.27.3"
+      "versionInfo": "0.29.1"
     },
     {
       "SPDXID": "SPDXRef-Package-typing-inspection",
@@ -401,7 +412,7 @@
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "MIT",
       "name": "typing-inspection",
-      "versionInfo": "0.4.4"
+      "versionInfo": "0.4.5"
     },
     {
       "SPDXID": "SPDXRef-Package-typing-extensions",
@@ -449,6 +460,11 @@
     },
     {
       "relatedSpdxElement": "SPDXRef-Package-cryptography",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-Mosaivue"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-defusedxml",
       "relationshipType": "DEPENDS_ON",
       "spdxElementId": "SPDXRef-Package-Mosaivue"
     },
@@ -549,6 +565,11 @@
     },
     {
       "relatedSpdxElement": "SPDXRef-Package-annotated-doc",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-fastapi"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-anyio",
       "relationshipType": "DEPENDS_ON",
       "spdxElementId": "SPDXRef-Package-fastapi"
     },
@@ -684,6 +705,11 @@
     },
     {
       "relatedSpdxElement": "SPDXRef-Package-annotated-doc",
+      "relationshipType": "DEPENDS_ON",
+      "spdxElementId": "SPDXRef-Package-typer"
+    },
+    {
+      "relatedSpdxElement": "SPDXRef-Package-pydantic",
       "relationshipType": "DEPENDS_ON",
       "spdxElementId": "SPDXRef-Package-typer"
     },

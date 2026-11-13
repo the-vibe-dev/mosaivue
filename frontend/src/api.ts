@@ -6,7 +6,21 @@ let csrfToken = sessionStorage.getItem('mosaivue.csrf') ?? '';
 export class ApiError extends Error {
   constructor(public status: number, message: string, public detail?: unknown) {
     super(message);
+    this.name = 'ApiError';
   }
+}
+
+export function apiErrorMessage(detail: unknown, fallback: string): string {
+  const value = typeof detail === 'object' && detail && 'detail' in detail
+    ? (detail as { detail: unknown }).detail : detail;
+  if (Array.isArray(value)) {
+    return value.map((item: { loc?: unknown[]; msg?: string }) => {
+      const field = item.loc?.filter((part) => part !== 'body').join(' → ');
+      return `${field ? `${field}: ` : ''}${item.msg ?? 'Invalid value'}`;
+    }).join('; ') || fallback;
+  }
+  if (typeof value === 'string' && value.trim() && !value.trim().startsWith('<')) return value.slice(0, 1000);
+  return fallback;
 }
 
 export function setCsrf(value: string): void {
@@ -30,11 +44,10 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
     credentials: 'same-origin',
   });
   if (!response.ok) {
-    let detail: unknown;
-    try { detail = await response.json(); } catch { detail = await response.text(); }
-    const message = typeof detail === 'object' && detail && 'detail' in detail
-      ? String((detail as { detail: unknown }).detail)
-      : response.statusText;
+    const body = await response.text();
+    let detail: unknown = body;
+    try { detail = JSON.parse(body); } catch { /* Plain-text proxy errors are valid responses. */ }
+    const message = apiErrorMessage(detail, response.statusText || `Request failed (${response.status})`);
     throw new ApiError(response.status, message, detail);
   }
   if (response.status === 204) return undefined as T;
@@ -78,11 +91,15 @@ export async function logout(): Promise<void> {
 }
 
 export async function download(path: string, filename: string, options: RequestInit = {}): Promise<void> {
-  const blob = await api<Blob>(path, options);
+  const result = await api<unknown>(path, options);
+  const blob = result instanceof Blob ? result : new Blob(
+    [JSON.stringify(result, null, 2)], { type: 'application/json' },
+  );
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;
   anchor.download = filename;
   anchor.click();
-  URL.revokeObjectURL(url);
+  // Give the browser time to begin consuming the download before releasing it.
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }

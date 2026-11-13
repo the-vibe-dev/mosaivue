@@ -4,8 +4,10 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$ROOT/installer/lib.sh"
 cw_require_root
 ARCHIVE=""; RELEASE_API="${MOSAIVUE_RELEASE_API:-https://api.github.com/repos/the-vibe-dev/mosaivue/releases?per_page=20}"
-PREFIX="$(cat /etc/mosaivue/install-prefix 2>/dev/null || printf '/opt/mosaivue')"
-PYTHON_BIN="$(cat /etc/mosaivue/python-bin 2>/dev/null || printf 'python3')"
+PREFIX="$(cw_read_root_metadata /etc/mosaivue/install-prefix /opt/mosaivue)"
+PREFIX="$(cw_validate_install_prefix "$PREFIX")"
+PYTHON_BIN="$(cw_read_root_metadata /etc/mosaivue/python-bin /usr/bin/python3)"
+[[ "$PYTHON_BIN" == /* && -x "$PYTHON_BIN" ]] || cw_die "Saved Python executable must be an absolute executable path"
 while (($#)); do
   case "$1" in
     --archive) ARCHIVE="${2:?missing archive}"; shift ;;

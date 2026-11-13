@@ -41,6 +41,9 @@ while (($#)); do
 done
 
 cw_require_root
+PREFIX="$(cw_validate_install_prefix "$PREFIX")"
+cw_assert_dedicated_prefix "$PREFIX"
+cw_assert_config_entries /etc/mosaivue
 umask 027
 cw_detect_platform
 cw_validate_os
@@ -190,7 +193,10 @@ for group in video render; do
   usermod -a -G "$group" mosaivue
 done
 install -d -o mosaivue -g mosaivue -m 0750 /var/lib/mosaivue /var/cache/mosaivue /var/log/mosaivue /run/mosaivue
-install -d -o root -g mosaivue -m 0770 /etc/mosaivue
+install -d -o root -g mosaivue -m 0750 /etc/mosaivue
+# Recheck after removing service-account directory write access, before any
+# privileged file writes or ownership changes during upgrades from old betas.
+cw_assert_config_entries /etc/mosaivue
 install -d -o root -g root -m 0755 "$PREFIX/releases"
 
 cw_log "Staging application release at $RELEASE_DIR"
@@ -284,12 +290,8 @@ JSON
 fi
 chown root:mosaivue /etc/mosaivue/config.json
 chmod 0640 /etc/mosaivue/config.json
-printf "%s\n" "$PREFIX" >/etc/mosaivue/install-prefix
-chown root:mosaivue /etc/mosaivue/install-prefix
-chmod 0640 /etc/mosaivue/install-prefix
-printf "%s\n" "$PYTHON_BIN" >/etc/mosaivue/python-bin
-chown root:mosaivue /etc/mosaivue/python-bin
-chmod 0640 /etc/mosaivue/python-bin
+cw_write_root_metadata /etc/mosaivue/install-prefix "$PREFIX"
+cw_write_root_metadata /etc/mosaivue/python-bin "$PYTHON_BIN"
 
 export MOSAIVUE_CONFIG=/etc/mosaivue/config.json
 export MOSAIVUE_DATA_DIR=/var/lib/mosaivue MOSAIVUE_CONFIG_DIR=/etc/mosaivue MOSAIVUE_CACHE_DIR=/var/cache/mosaivue MOSAIVUE_LOG_DIR=/var/log/mosaivue MOSAIVUE_RUN_DIR=/run/mosaivue
@@ -315,6 +317,9 @@ chown -R mosaivue:mosaivue /var/lib/mosaivue /var/cache/mosaivue /var/log/mosaiv
 find /var/lib/mosaivue -maxdepth 1 -type f -name 'mosaivue.db*' -exec chmod 0600 {} +
 chown root:mosaivue /etc/mosaivue/master.key /etc/mosaivue/setup-token 2>/dev/null || true
 chmod 0640 /etc/mosaivue/master.key /etc/mosaivue/setup-token 2>/dev/null || true
+# The web service consumes this file by truncating it; directory entries and
+# installer metadata remain protected from the service account.
+chmod 0660 /etc/mosaivue/setup-token 2>/dev/null || true
 
 cw_log "Probing installed video decoders as the Mosaivue service account"
 if ! (cd "$RELEASE_DIR.new" && runuser -u mosaivue -- ./.venv/bin/python -) <<'PY'

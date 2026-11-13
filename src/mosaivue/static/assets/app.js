@@ -1,5 +1,5 @@
 import { ApiError, api, getAuth, login, logout, setup } from './api.js';
-import { aboutPage, backupPage, camerasPage, dashboardPage, displayPage, layoutEditorPage, layoutsPage, logsPage, remotePage, rendererPage, rotationsPage, systemPage, } from './pages.js';
+import { aboutPage, backupPage, camerasPage, dashboardPage, displayPage, layoutEditorPage, layoutsPage, logsPage, remotePage, rendererPage, rotationsPage, schedulesPage, systemPage, } from './pages.js';
 import { resolve, route, startRouter } from './router.js';
 import { escapeHtml, icon, toast } from './ui.js';
 const app = document.querySelector('#app');
@@ -12,6 +12,7 @@ const navigation = [
     { href: '/cameras', label: 'Cameras', icon: 'camera' },
     { href: '/layouts', label: 'Layouts', icon: 'layout' },
     { href: '/rotations', label: 'Rotation groups', icon: 'rotate' },
+    { href: '/schedules', label: 'Schedules', icon: 'display' },
     { href: '/display', label: 'Display', icon: 'display' },
     { href: '/renderer', label: 'Renderer', icon: 'gauge' },
     { href: '/system', label: 'System', icon: 'system' },
@@ -163,6 +164,7 @@ function registerRoutes() {
     route('/layouts', layoutsPage);
     route('/layouts/:id/edit', ({ id }) => layoutEditorPage(id ?? ''));
     route('/rotations', rotationsPage);
+    route('/schedules', schedulesPage);
     route('/display', displayPage);
     route('/renderer', rendererPage);
     route('/system', systemPage);
@@ -229,12 +231,13 @@ function wireShell() {
         const dialog = document.createElement('dialog');
         dialog.className = 'modal';
         dialog.innerHTML = `<form method="dialog" class="modal-shell" id="password-form">
-      <header class="modal-header"><h2>Change password</h2><button class="icon-button" value="cancel">${icon('close')}</button></header>
+      <header class="modal-header"><h2>Change password</h2><button type="button" class="icon-button" data-password-cancel aria-label="Close">${icon('close')}</button></header>
       <div class="modal-body form-grid"><label><span>Current password</span><input class="input" type="password" name="current" autocomplete="current-password" required /></label><label><span>New password</span><input class="input" type="password" name="password" autocomplete="new-password" minlength="12" required /></label><label><span>Confirm new password</span><input class="input" type="password" name="confirm" autocomplete="new-password" minlength="12" required /></label></div>
-      <footer class="modal-footer"><button class="button button-ghost" value="cancel">Cancel</button><button class="button button-primary" value="save">Change password</button></footer>
+      <footer class="modal-footer"><button type="button" class="button button-ghost" data-password-cancel>Cancel</button><button type="submit" class="button button-primary" value="save">Change password</button></footer>
     </form>`;
         document.body.append(dialog);
         dialog.addEventListener('close', () => dialog.remove());
+        dialog.querySelectorAll('[data-password-cancel]').forEach((button) => button.addEventListener('click', () => dialog.close('cancel')));
         dialog.querySelector('form')?.addEventListener('submit', async (event) => {
             const submitter = event.submitter;
             if (submitter?.value !== 'save')

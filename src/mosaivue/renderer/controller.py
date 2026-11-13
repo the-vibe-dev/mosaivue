@@ -4,6 +4,7 @@ import asyncio
 import logging
 import random
 from collections import defaultdict
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
@@ -71,16 +72,14 @@ class RendererController:
                 target_height = profile.height if profile else layout_revision.data.get("output_height")
                 target_width = int(target_width or self.output_width)
                 target_height = int(target_height or self.output_height)
-                if (target_width, target_height) != (self.output_width, self.output_height):
-                    self.backend.set_output_size(target_width, target_height)
-                    self.output_width, self.output_height = target_width, target_height
-                desired, rotation_slots = self._specs_for_layout(db, layout_revision.data)
+                desired, rotation_slots, cursors = self._specs_for_layout(
+                    db, layout_revision.data, target_width, target_height
+                )
 
+            self._apply_transaction(desired, target_width, target_height)
             self._cancel_focus_restore()
             self._cancel_rotations()
-            self._apply_diff(desired)
-            if desired:
-                self.backend.start_playback()
+            self.rotation_cursors = defaultdict(RotationCursor, cursors)
             self.active_layout_id = layout_id
             self.active_revision = revision_number
             self.focused = False
@@ -91,22 +90,33 @@ class RendererController:
             return self.status()
 
     def _specs_for_layout(
-        self, db: Session, data: dict[str, Any]
-    ) -> tuple[dict[str, StreamSpec], dict[str, str]]:
+        self, db: Session, data: dict[str, Any], width: int, height: int
+    ) -> tuple[dict[str, StreamSpec], dict[str, str], dict[str, RotationCursor]]:
         camera_service = CameraService(db, self.cipher)
         desired: dict[str, StreamSpec] = {}
         rotations: dict[str, str] = {}
+        cursors: dict[str, RotationCursor] = {}
         for raw_slot in data.get("slots", []):
             if not raw_slot.get("enabled", True) or raw_slot.get("type") == "empty":
                 continue
-            rect = normalized_to_pixels(raw_slot, self.output_width, self.output_height)
+            rect = normalized_to_pixels(raw_slot, width, height)
             if raw_slot.get("type") == "rotation":
                 group_id = raw_slot.get("rotation_group_id")
                 group = db.get(RotationGroup, group_id)
                 if not group or not group.enabled or not group.camera_entries:
                     continue
-                cursor = self.rotation_cursors[group.id]
-                cursor.index = min(group.start_position, len(group.camera_entries) - 1)
+                start = min(group.start_position, len(group.camera_entries) - 1)
+                available: list[int] = []
+                for offset in range(len(group.camera_entries)):
+                    step = -1 if group.order_mode == "reverse" else 1
+                    index = (start + offset * step) % len(group.camera_entries)
+                    candidate = db.get(Camera, group.camera_entries[index]["camera_id"])
+                    if candidate is not None and candidate.enabled and candidate.stream_profiles:
+                        available.append(index)
+                if not available:
+                    continue
+                cursor = RotationCursor(index=available[0])
+                cursors[raw_slot["id"]] = cursor
                 entry = group.camera_entries[cursor.index]
                 rotations[raw_slot["id"]] = group.id
                 camera_id = entry["camera_id"]
@@ -157,7 +167,42 @@ class RendererController:
                 crop=raw_slot.get("crop") or {},
                 is_rotation=raw_slot.get("type") == "rotation",
             )
-        return desired, rotations
+        return desired, rotations, cursors
+
+    def _apply_transaction(
+        self, desired: dict[str, StreamSpec], width: int, height: int
+    ) -> None:
+        """Restore the previous wall if a synchronous backend update fails.
+
+        Live decoders may fail after accepting a spec; their normal health and
+        recovery path handles that. This rollback covers rejected configuration
+        and backend exceptions, not asynchronous first-frame qualification.
+        """
+        previous = deepcopy(self.current_specs)
+        previous_size = (self.output_width, self.output_height)
+        try:
+            if (width, height) != previous_size:
+                self.backend.set_output_size(width, height)
+            self._apply_diff(desired)
+            if desired:
+                self.backend.start_playback()
+        except Exception:
+            LOGGER.exception("Layout update failed; restoring the previous wall")
+            try:
+                # An add/replace operation can raise after partially creating a
+                # branch, so clean up every potentially touched slot first.
+                for slot_id in set(previous) | set(desired):
+                    self.backend.remove_stream(slot_id)
+                self.backend.set_output_size(*previous_size)
+                self.current_specs.clear()
+                self._apply_diff(previous)
+                if previous:
+                    self.backend.start_playback()
+            except Exception as rollback_error:
+                LOGGER.exception("Previous wall could not be restored")
+                raise RuntimeError("Layout update failed and rollback failed; restart the renderer") from rollback_error
+            raise
+        self.output_width, self.output_height = width, height
 
     def _apply_diff(self, desired: dict[str, StreamSpec]) -> None:
         for slot_id in set(self.current_specs) - set(desired):
@@ -172,6 +217,10 @@ class RendererController:
                 or current.stream_profile_id != spec.stream_profile_id
                 or current.url != spec.url
                 or current.is_rotation != spec.is_rotation
+                or current.transport != spec.transport
+                or current.latency_profile != spec.latency_profile
+                or current.source_width != spec.source_width
+                or current.source_height != spec.source_height
             ):
                 self.backend.replace_stream(slot_id, spec)
             else:
@@ -250,26 +299,50 @@ class RendererController:
                 group = db.get(RotationGroup, group_id) if group_id else None
                 if not group or not group.camera_entries:
                     raise ValueError("Rotation group is empty or unavailable")
+                if not group.enabled:
+                    await asyncio.to_thread(self.backend.cancel_prepared, slot_id)
+                    return self.status()
                 if prepare_only and (group.preconnect == "off" or group.order_mode in {"random", "weighted"}):
                     return self.status()
-                cursor = self.rotation_cursors[group.id]
+                cursor = self.rotation_cursors[slot_id]
                 previous_index = cursor.index
                 entries = list(group.camera_entries)
+                available: list[int] = []
+                for index, entry in enumerate(entries):
+                    camera = db.get(Camera, entry["camera_id"])
+                    if camera is not None and camera.enabled and camera.stream_profiles:
+                        available.append(index)
+                if not available:
+                    raise ValueError("Rotation group has no enabled cameras with stream profiles")
                 if group.order_mode == "random":
-                    next_entry = random.choice(entries)
+                    next_index = random.choice(available)
                 elif group.order_mode == "weighted":
-                    next_entry = random.choices(
-                        entries, weights=[max(1, int(item.get("weight", 1))) for item in entries], k=1
+                    next_index = random.choices(
+                        available,
+                        weights=[max(1, int(entries[index].get("weight", 1))) for index in available],
+                        k=1,
                     )[0]
                 else:
                     step = -direction if group.order_mode == "reverse" else direction
-                    next_index = (cursor.index + step) % len(entries)
-                    if not prepare_only:
-                        cursor.index = next_index
-                    next_entry = entries[next_index]
+                    next_index = next(
+                        candidate for offset in range(1, len(entries) + 1)
+                        if (candidate := (cursor.index + offset * step) % len(entries)) in available
+                    )
+                next_entry = entries[next_index]
                 service = CameraService(db, self.cipher)
+                camera = service.get(next_entry["camera_id"])
+                profile_meta = choose_stream_profile(
+                    [
+                        {"id": profile.id, "priority": profile.priority,
+                         "width": profile.width, "height": profile.height}
+                        for profile in camera.stream_profiles
+                    ],
+                    current.rect,
+                    mode=(raw or {}).get("stream_selection", "automatic"),
+                    preferred_id=next_entry.get("stream_profile_id") or (raw or {}).get("stream_profile_id"),
+                )
                 camera, profile, url = service.resolve_stream_url(
-                    next_entry["camera_id"], next_entry.get("stream_profile_id")
+                    next_entry["camera_id"], profile_meta["id"]
                 )
                 replacement = StreamSpec(
                     slot_id=slot_id,
@@ -295,6 +368,16 @@ class RendererController:
                     crop=current.crop,
                     is_rotation=True,
                 )
+            if (
+                replacement.camera_id == current.camera_id
+                and replacement.stream_profile_id == current.stream_profile_id
+                and replacement.url == current.url
+                and replacement.transport == current.transport
+                and replacement.latency_profile == current.latency_profile
+            ):
+                if not prepare_only:
+                    cursor.index = next_index
+                return self.status()
             if prepare_only:
                 await asyncio.to_thread(self.backend.prepare_stream, slot_id, replacement)
                 return self.status()
@@ -306,8 +389,12 @@ class RendererController:
                 )
                 await asyncio.to_thread(switch, slot_id, replacement)
             except Exception:
-                cursor.index = previous_index
+                # A failed next camera must not permanently block the rest of a
+                # skip-mode sequence. Keep the current video, but try the entry
+                # after the failed camera next time. Hold mode retries it.
+                cursor.index = next_index if group.failure_behavior == "skip" else previous_index
                 raise
+            cursor.index = next_index
             self.current_specs[slot_id] = replacement
             self.rotation_failures.pop(slot_id, None)
             return self.status()
@@ -320,8 +407,6 @@ class RendererController:
         duration_seconds: int | None = None,
     ) -> dict[str, Any]:
         async with self._lock:
-            self._cancel_focus_restore()
-            self._cancel_rotations()
             with self.session_factory() as db:
                 service = CameraService(db, self.cipher)
                 camera, profile, url = service.resolve_stream_url(camera_id, stream_profile_id)
@@ -337,8 +422,12 @@ class RendererController:
                     transport=profile.transport,
                     latency_profile=profile.latency_profile,
                     stream_profile_id=profile.id,
+                    source_width=profile.width,
+                    source_height=profile.height,
                 )
-            self._apply_diff({"__focus__": spec})
+            self._apply_transaction({"__focus__": spec}, self.output_width, self.output_height)
+            self._cancel_focus_restore()
+            self._cancel_rotations()
             self.focused = True
             if duration_seconds:
                 self.focus_restore_task = asyncio.create_task(
@@ -363,7 +452,6 @@ class RendererController:
     async def restore_layout(self) -> dict[str, Any]:
         if not self.active_layout_id:
             raise ValueError("No active layout to restore")
-        self._cancel_focus_restore()
         return await self.apply_layout(self.active_layout_id, self.active_revision)
 
     def pause_rotation(self, group_id: str) -> None:
@@ -403,13 +491,22 @@ class RendererController:
 
     def _cancel_rotations(self) -> None:
         for slot_id in self.rotation_tasks:
-            self.backend.cancel_prepared(slot_id)
+            try:
+                self.backend.cancel_prepared(slot_id)
+            except Exception:
+                LOGGER.exception("Could not release prepared rotation source", extra={"slot_id": slot_id})
         for task in self.rotation_tasks.values():
             task.cancel()
         self.rotation_tasks.clear()
         self.rotation_failures.clear()
 
     async def shutdown(self) -> None:
-        self._cancel_focus_restore()
-        self._cancel_rotations()
-        self.backend.shutdown()
+        async with self._lock:
+            tasks = list(self.rotation_tasks.values())
+            if self.focus_restore_task:
+                tasks.append(self.focus_restore_task)
+            self._cancel_focus_restore()
+            self._cancel_rotations()
+            self.backend.shutdown()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)

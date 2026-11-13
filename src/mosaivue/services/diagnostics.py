@@ -60,8 +60,8 @@ def security_audit() -> dict[str, Any]:
     )
     config_mode_ok = True
     if CONFIG_DIR.exists():
-        config_mode_ok = (CONFIG_DIR.stat().st_mode & 0o007) == 0
-    add("config_directory_permissions", config_mode_ok, f"{CONFIG_DIR}; no access for other users")
+        config_mode_ok = (CONFIG_DIR.stat().st_mode & 0o027) == 0
+    add("config_directory_permissions", config_mode_ok, f"{CONFIG_DIR}; no group write or access for other users")
     add("database_exists", DB_PATH.is_file(), f"Configuration database at {DB_PATH}")
     if DB_PATH.exists():
         database = DB_PATH.lstat()

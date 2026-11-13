@@ -1,0 +1,72 @@
+# Mosaivue renderer, scheduling, and runtime review
+
+Scope: uploaded source snapshot, renderer backends/controller/RPC, rotation service, scheduling. All changes below are present in the updated working tree. This is source/contract verification; no claim of physical HDMI, Pi, Rockchip, or GPU qualification is made.
+
+## Implemented corrections
+
+| Priority | Finding in original source | Consequence | Implemented correction and evidence |
+|---|---|---|---|
+| High reliability | Rotation position was stored by rotation group, despite running one loop per slot. | Two tiles using the same group changed each other's position and could skip cameras. | Store cursors per slot and initialize each independently. `renderer/controller.py:92,307`; `test_shared_rotation_group_has_independent_tile_positions`. |
+| High performance | Initial layout selected profiles by tile size, but subsequent rotation resolved the camera's default/main profile. | A small tile could suddenly switch to a high-resolution main stream, increasing decode load. | Apply the same automatic/profile-override selection on every switch, including preconnect. `renderer/controller.py:333`; `test_automatic_substream_selection_survives_rotation`. |
+| High reliability | Backend changes were applied incrementally; an exception after removing old streams or partially adding new ones left a damaged wall. Dimensions changed before configuration resolution. | A failed layout could contradict the advertised last-known-good behavior. | Resolve all requested sources before mutation; snapshot prior specs/dimensions; clean partial branches and restore previous wall after synchronous rejection. Retain existing focus/rotation tasks until success. `renderer/controller.py:55,172`; `test_partial_layout_failure_restores_specs_dimensions_and_rotation`. This does not validate asynchronous first-frame success. |
+| High reliability | Invalid focus canceled rotations before resolving the target. First-ever focus did not call `start_playback`. | Failed focus could stall rotation; GStreamer could remain READY with no picture. | Validate/build focus first, apply through the same recovery path, start playback, then cancel old timers. Include source dimensions for geometry. `renderer/controller.py:402`; focus regression tests. |
+| Medium reliability | Rotation behavior fields existed but failure handling always restored the cursor; disabled groups were not checked at runtime. | One unavailable next camera could obstruct the remainder of a sequence; disabling a group did not stop its current loop. | Implement `skip` and `hold`: both keep current visible video after a failed switch; skip tries the following entry next, hold retries the failed entry. Skip disabled/missing cameras and stop advancing disabled groups. `renderer/controller.py:278–400`; skip/hold/disabled tests. `placeholder` remains unsupported and uses hold-compatible behavior. |
+| Medium reliability | Changing a profile's transport/latency while retaining its ID and URL did not rebuild the source. | Saved settings could appear applied while the renderer continued the old transport/buffering behavior. | Include transport, latency, and source dimensions in diff replacement decisions. `renderer/controller.py:207`; `test_changing_transport_and_latency_replaces_source`. |
+| High correctness | Overnight schedule matching used the current day for both sides of midnight. Inclusive ends overlapped adjacent windows; equal start/end matched only one minute. | Monday's overnight wall could run at the wrong early-morning period and fail Tuesday morning. | Days now refer to the start day; windows are start-inclusive/end-exclusive; equal times mean a full 24 hours. Priority ties resolve by creation time then ID. Scheduler compares against current controller layout instead of an obsolete local cache. `services/schedules.py:16,34`, `renderer/daemon.py:97`; 10 schedule tests. |
+| Medium correctness | Rotation entries could reference another camera's profile; groups could be deleted while current layouts referenced them. | Configuration could be saved successfully and fail only on activation/rotation. | Validate profile ownership; reject deletion with the layout names requiring the group. `services/rotations.py:38,55`; three service tests. Historical revisions may still refer to removed objects and should be revalidated before rollback. |
+| High fault isolation | GStreamer attributed an error to the first slot ID found as a substring in element names. | IDs such as `front` and `front-door` could attribute a failing camera to a healthy tile. | Match actual element ownership/ancestry, including prepared and retired branches. `renderer/gstreamer.py:1662`; exact-ownership regression tests. |
+| Medium control behavior | OMXPlayer forced TCP for all plain RTSP, omitted initial opacity/layer, ignored subsequent opacity/layer settings, and always restarted on resize. | The displayed result could disagree with saved controls and geometry edits interrupted decoding. | Honor TCP/UDP/auto, pass `--alpha`/`--layer`, use existing `VideoPos` and `SetLayer` commands with restart fallback, and apply opacity via process replacement for compatibility with legacy D-Bus builds. `renderer/omxplayer.py:85,268,299,312`; backend contract tests. Physical D-Bus/firmware behavior remains to qualify. |
+| Medium operability | GStreamer output caps hard-coded five compositor frames per second. | More capable hardware had no supported tuning path for a smoother wall. | Add validated `MOSAIVUE_OUTPUT_FPS=1..60`, default **5** retained. Caps and output health use the selected value. `renderer/gstreamer.py:83,164,296,367,1114`; parser/caps tests. This controls compositor FPS, not camera source FPS or monitor refresh rate. |
+| Medium operability | Renderer response reads used asyncio's 64KiB default; response/read timeout and protocol failures did not consistently become `RendererRPCError`. | Large status responses could fail; ordinary service timeouts could surface as generic API exceptions. | 1MiB protocol framing limit, explicit request/response types, bounded read/write waits, normal availability errors, disconnected-writer cleanup. `renderer/rpc.py:15,27,92`; large-message, timeout, malformed-protocol tests. |
+| Low shutdown reliability | Rotation/focus tasks were canceled but not joined; one failed standby cleanup could prevent the remaining tasks from being canceled. | Shutdown could leave pending task warnings or incomplete cleanup. | Serialize shutdown with controller mutation, gather canceled tasks, and handle standby cleanup failures individually. `renderer/controller.py:492,503`; shutdown test. |
+
+## New configuration and behavior notes for release documentation
+
+- `MOSAIVUE_OUTPUT_FPS` is a GStreamer renderer environment variable. Valid integer range 1–60. Unset retains 5. A systemd drop-in can set `Environment=MOSAIVUE_OUTPUT_FPS=15`; restart the renderer after changing it. Do not present 15/30/60 as a verified hardware capability. Monitor CPU, memory, dropped frames, and recovery on the actual appliance.
+- Schedule days are local appliance weekdays (0=Monday through 6=Sunday). Monday 22:00–06:00 continues until Tuesday 06:00. End times are exclusive. Equal start/end gives 24 hours anchored on the selected start day.
+- A matching schedule is authoritative and can reapply itself on the next 30-second tick after a manual layout change. Focus suspends this scheduling behavior. No automatic fallback layout is selected when the last matching window ends; the current wall remains. Add an explicit all-day lower-priority schedule if a default is required.
+- Failure mode `skip` now progresses past an unavailable next entry on the following attempt; `hold` keeps retrying that entry. Both preserve the current playing camera after a synchronous failed cut.
+- Rotation groups reused by multiple tiles now have independent progression. `rotate_together_group` is not an implemented synchronization feature.
+- OMX opacity changes require a stream restart. Geometry and z-order use D-Bus when available and restart only on a failed command.
+- A synchronous layout exception triggers a best-effort complete restoration of previous specs/output size; restoration itself can fail on broken hardware and returns an explicit restart-required error. Changes that are accepted initially but never yield frames remain the backend's watchdog/recovery responsibility.
+
+## Important remaining product gaps
+
+1. **Hardware acceptance rather than broad platform claims.** The repository has substantial mocked backend coverage but this environment has no camera, HDMI/DRM node, PyGObject/GStreamer, OMXPlayer, Pi, Rockchip, or GPU. Mixed aspect ratios, multiple rotation slots, first-frame startup, hours-long memory growth, thermal limits, and reconnect behavior need measured site tests.
+2. **Actual multi-display and portrait-output implementation.** Display profiles store `output_name`, display rotation, refresh rate, and blanking preference, but the controller only consumes dimensions. The single-pipeline backend does not implement a display fleet or multiple DRM connector outputs. These are significant dedicated-display competitor gaps.
+3. **Honest backend capability negotiation.** OMX title labels are metadata-only and manual crop values are not applied by `_player_args`; both backend `snapshot` methods return `None`. The camera probe's screenshot preview is a separate implementation. Neither display backend implements slot audio unmute: GStreamer selects video tracks only; OMX starts with audio disabled. Per-slot background/border fields and native-aspect presentation also need a capability audit rather than blanket UI promises.
+4. **Complete failure policies and synchronization.** `placeholder` and `rotate_together_group` are retained schema fields, not complete cross-backend implementations. Expose them as unavailable/compatibility state until shipped. Random/weighted modes do not preconnect a known future camera and may repeat the current entry.
+5. **Cold-source, asynchronous acceptance and recovery.** Synchronous rollback cannot prove that every new stream decodes. A genuine last-known-good activation policy would need a readiness window and explicit handling of temporarily unavailable sources. Existing GStreamer emergency recovery can deliberately recycle the entire renderer after sustained rotation failures, including healthy fixed tiles in the escalation path; do not describe fault isolation as absolute.
+6. **Event-loop latency and long operations.** Some backend mutations still run synchronously on the renderer event loop. OMX startup/handoff waits and GStreamer state changes can make unrelated status/control RPCs slow. A serialized worker/command queue with operation IDs and measured deadlines is a future architectural improvement; it needs cancellation and ownership tests before adoption.
+7. **OMX health is playback-state confirmation.** `_watch` refreshes `last_frame_monotonic` after querying `Playing`, which does not prove pixel advancement. Process-spawn failures during automatic restart also need more resilient monitor handling/backoff. A frozen decoder can require a stronger liveness measurement.
+8. **Scheduler fallback and timezone management.** No in-app timezone choice or scheduled-window expiration fallback exists. Current behavior is deterministic and documented, but a UI-managed timezone/default wall and explicit override duration would be useful.
+9. **Persistent/aggregated health.** Per-process counters reset on restart, and there is no long-term per-camera uptime/latency history or alert delivery in this scope. A metrics endpoint plus bounded history is a practical future addition.
+10. **Edge-of-screen geometry — corrected in the final integration pass.** The schema now validates pixel-override structure and explicit bounds. The renderer clips normalized and pixel geometry to the actual output and preserves a minimum one-pixel size; nonpositive output dimensions are rejected. See `renderer/geometry.py`, the layout schemas, and `tests/unit/test_geometry.py`. This was completed after the focused renderer pass below; the final combined suite includes the added tests.
+
+## Verification
+
+This focused result predates the final integration pass. The authoritative final combined result is 245 passed and one environment skip; see [validation.md](validation.md).
+
+Command:
+
+```sh
+/workspace/scratch/edae5c4b41d9/review/.venv/bin/python -m pytest tests/renderer tests/unit/test_schedules.py tests/unit/test_rotation_service.py tests/unit/test_decoder_policy.py tests/unit/test_geometry.py -q
+```
+
+Result: **95 passed, 1 skipped** in the focused renderer/service set. The one skipped test is the real Unix-socket round trip: this execution environment returns `PermissionError: Operation not permitted` when creating `AF_UNIX` sockets. Protocol/timeout/large-frame tests still run using real asyncio StreamReaders and controlled in-memory writers. The real-socket test remains included and runs on a permissive Linux host.
+
+Ruff check of all renderer source, changed services, and all newly added tests: **passed**.
+
+New test files:
+
+- `tests/renderer/test_controller_regressions.py`
+- `tests/renderer/test_backend_regressions.py`
+- `tests/renderer/test_rpc.py`
+- `tests/unit/test_schedules.py`
+- `tests/unit/test_rotation_service.py`
+
+The existing decoder, geometry, OMX, and GStreamer failover contract tests passed alongside the additions. No physical performance or compatibility conclusions can be derived from these mock-backed tests.
+
+## Next hardware test run
+
+Use a three-camera sequence where the middle camera is deliberately unavailable, two independently rotating tiles using the same group, one fixed camera, mixed 4:3/16:9 sources, H.264/H.265 where supported, a low-resolution profile, and an overnight schedule. Verify skip/hold semantics, unchanged fixed-tile motion, profile selection and transport, first-ever focus, active-layout failure recovery, and per-slot attribution. Run the same wall on the existing tested Pi 3B+/OMX, ROCK Pi/GStreamer, and Ubuntu GPU setups at default FPS before opting into higher compositor rates. Keep samples for initial cold boot, short camera outage, prolonged outage, all-source outage, layout/opacity/geometry edits, and a 24–72 hour soak. Pi 4/5 and portrait/dual-monitor claims require their own acceptance records.

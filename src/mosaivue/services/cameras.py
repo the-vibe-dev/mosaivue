@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
 from urllib.parse import urlsplit
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..logging_utils import redact_url
-from ..models import Camera, Credential, StreamProfile
+from ..models import Camera, Credential, Layout, LayoutRevision, RotationGroup, StreamProfile, uuid4
 from ..schemas import CameraCreate, CameraOut, CameraUpdate, StreamProfileIn, StreamProfileOut
 from ..security import CredentialCipher, inject_url_credentials, strip_url_credentials
 
@@ -43,17 +41,12 @@ class CameraService:
         return camera
 
     def create(self, payload: CameraCreate) -> Camera:
-        username = payload.username
-        password = payload.password
-        clean_profiles: list[StreamProfileIn] = []
-        for profile in payload.stream_profiles:
-            clean_url, embedded_user, embedded_password = strip_url_credentials(profile.url)
-            username = username or embedded_user
-            password = password if password is not None else embedded_password
-            clean_profiles.append(profile.model_copy(update={"url": clean_url}))
+        clean_profiles, username, password = self._clean_profiles(
+            payload.stream_profiles, payload.username, payload.password
+        )
 
         credential: Credential | None = None
-        if username or password:
+        if username is not None or password is not None:
             credential = Credential(username=username, encrypted_secret="")
             self.db.add(credential)
             self.db.flush()
@@ -76,29 +69,110 @@ class CameraService:
         self.db.add(camera)
         self.db.flush()
         for profile in clean_profiles:
-            camera.stream_profiles.append(self._profile_from_input(profile))
+            camera.stream_profiles.append(self._profile_from_input(profile.model_copy(update={"id": None})))
         self.db.flush()
         LOGGER.info("Camera created: %s", camera.name, extra={"camera_id": camera.id})
         return camera
 
+    @staticmethod
+    def _clean_profiles(
+        profiles: list[StreamProfileIn], username: str | None, password: str | None
+    ) -> tuple[list[StreamProfileIn], str | None, str | None]:
+        clean_profiles = []
+        embedded_users: set[str] = set()
+        embedded_passwords: set[str] = set()
+        for profile in profiles:
+            clean_url, embedded_user, embedded_password = strip_url_credentials(profile.url)
+            if embedded_user is not None:
+                embedded_users.add(embedded_user)
+            if embedded_password is not None:
+                embedded_passwords.add(embedded_password)
+            clean_profiles.append(profile.model_copy(update={"url": clean_url}))
+        if (username is None and len(embedded_users) > 1) or (
+            password is None and len(embedded_passwords) > 1
+        ):
+            raise ValueError("All profiles of a camera must use the same credentials")
+        if username is None and embedded_users:
+            username = next(iter(embedded_users))
+        if password is None and embedded_passwords:
+            password = next(iter(embedded_passwords))
+        return clean_profiles, username, password
+
+    def _references(self, camera_id: str, profile_ids: set[str] | None = None) -> list[str]:
+        references: list[str] = []
+        current = self.db.execute(
+            select(Layout.name, LayoutRevision.data).join(
+                LayoutRevision,
+                (LayoutRevision.layout_id == Layout.id)
+                & (LayoutRevision.revision == Layout.current_revision),
+            )
+        )
+        for name, data in current:
+            for slot in data.get("slots", []):
+                if profile_ids is None:
+                    used = camera_id in {slot.get("camera_id"), slot.get("selected_camera_id")}
+                else:
+                    used = slot.get("stream_profile_id") in profile_ids
+                if used:
+                    references.append(f"layout {name}")
+                    break
+        for group in self.db.scalars(select(RotationGroup)):
+            if any(
+                (entry.get("camera_id") == camera_id if profile_ids is None
+                 else entry.get("stream_profile_id") in profile_ids)
+                for entry in group.camera_entries
+            ):
+                references.append(f"rotation group {group.name}")
+        return references
+
     def update(self, camera_id: str, payload: CameraUpdate) -> Camera:
         camera = self.get(camera_id)
         data = payload.model_dump(exclude_unset=True)
-        streams = data.pop("stream_profiles", None)
+        data.pop("stream_profiles", None)
         clear_credentials = bool(data.pop("clear_credentials", False))
         username_set = "username" in data
         password_set = "password" in data
         username = data.pop("username", None)
         password = data.pop("password", None)
+        profiles = payload.stream_profiles
+        replacements: list[tuple[StreamProfileIn, StreamProfile | None]] = []
+        removed: list[StreamProfile] = []
+        if profiles is not None:
+            profiles, embedded_user, embedded_password = self._clean_profiles(
+                profiles, username if username_set else None, password if password_set else None
+            )
+            if not clear_credentials:
+                if not username_set and embedded_user is not None:
+                    username, username_set = embedded_user, True
+                if not password_set and embedded_password is not None:
+                    password, password_set = embedded_password, True
+            by_id = {profile.id: profile for profile in camera.stream_profiles}
+            by_name = {profile.name: profile for profile in camera.stream_profiles}
+            kept_ids: set[str] = set()
+            for profile in profiles:
+                if profile.id is not None and profile.id not in by_id:
+                    raise ValueError("Stream profile ID does not belong to this camera")
+                existing = by_id.get(profile.id) if profile.id else by_name.get(profile.name)
+                if existing is not None:
+                    if existing.id in kept_ids:
+                        raise ValueError("A stream profile cannot be submitted more than once")
+                    kept_ids.add(existing.id)
+                replacements.append((profile, existing))
+            removed = [profile for profile in camera.stream_profiles if profile.id not in kept_ids]
+            references = self._references(camera.id, {profile.id for profile in removed})
+            if references:
+                raise ValueError("Stream profiles are still used by " + ", ".join(references))
 
+        # Validate references and credentials before mutating any database rows.
         for field, value in data.items():
             setattr(camera, field, value)
-
         if clear_credentials:
             if camera.credential:
                 self.db.delete(camera.credential)
             camera.credential = None
-        elif username_set or password_set:
+        elif (username_set or password_set) and (
+            camera.credential is not None or username is not None or password is not None
+        ):
             if camera.credential is None:
                 camera.credential = Credential(username=username, encrypted_secret="")
                 self.db.add(camera.credential)
@@ -116,30 +190,29 @@ class CameraService:
                 current_password, context=camera.credential.id
             )
 
-        if streams is not None:
-            camera.stream_profiles.clear()
+        if profiles is not None:
+            for profile in removed:
+                camera.stream_profiles.remove(profile)
+            # Release old unique names before renaming (including a name swap).
+            for profile, existing in replacements:
+                if existing is not None and profile.name != existing.name:
+                    existing.name = f"__update_{uuid4()}"
             self.db.flush()
-            for raw in streams:
-                profile = raw if isinstance(raw, StreamProfileIn) else StreamProfileIn.model_validate(raw)
-                clean_url, embedded_user, embedded_password = strip_url_credentials(profile.url)
-                if embedded_user or embedded_password:
-                    if camera.credential is None:
-                        camera.credential = Credential(username=embedded_user, encrypted_secret="")
-                        self.db.add(camera.credential)
-                        self.db.flush()
-                    if embedded_user:
-                        camera.credential.username = embedded_user
-                    camera.credential.encrypted_secret = self.cipher.encrypt(
-                        embedded_password or "", context=camera.credential.id
-                    )
-                profile = profile.model_copy(update={"url": clean_url})
-                camera.stream_profiles.append(self._profile_from_input(profile))
+            for profile, existing in replacements:
+                if existing is None:
+                    camera.stream_profiles.append(self._profile_from_input(profile.model_copy(update={"id": None})))
+                else:
+                    for field, value in profile.model_dump(mode="json", exclude={"id"}).items():
+                        setattr(existing, field, value)
         self.db.flush()
         LOGGER.info("Camera updated: %s", camera.name, extra={"camera_id": camera.id})
         return camera
 
     def delete(self, camera_id: str) -> None:
         camera = self.get(camera_id)
+        references = self._references(camera.id)
+        if references:
+            raise ValueError("Camera is still used by " + ", ".join(references))
         credential = camera.credential
         self.db.delete(camera)
         self.db.flush()
@@ -156,11 +229,12 @@ class CameraService:
             credential_password = self.cipher.decrypt(
                 source.credential.encrypted_secret, context=source.credential.id
             )
-        name = f"{source.name} Copy"
+        name = f"{source.name[:250]} Copy"
         counter = 2
         existing_names = {camera.name for camera in self.list()}
         while name in existing_names:
-            name = f"{source.name} Copy {counter}"
+            suffix = f" Copy {counter}"
+            name = source.name[:255 - len(suffix)] + suffix
             counter += 1
         payload = CameraCreate(
             name=name,
@@ -192,6 +266,12 @@ class CameraService:
         return self.create(payload)
 
     def output(self, camera: Camera) -> CameraOut:
+        has_password = bool(
+            camera.credential
+            and self.cipher.decrypt(
+                camera.credential.encrypted_secret, context=camera.credential.id
+            )
+        )
         return CameraOut(
             id=camera.id,
             name=camera.name,
@@ -203,7 +283,7 @@ class CameraService:
             tags=camera.tags,
             location=camera.location,
             username=camera.credential.username if camera.credential else None,
-            has_password=bool(camera.credential and camera.credential.encrypted_secret),
+            has_password=has_password,
             stream_profiles=[StreamProfileOut.model_validate(profile) for profile in camera.stream_profiles],
             created_at=camera.created_at,
             updated_at=camera.updated_at,

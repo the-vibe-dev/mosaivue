@@ -7,6 +7,7 @@ import zipfile
 from datetime import UTC, datetime
 from typing import Any
 
+from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
@@ -21,11 +22,15 @@ from ..models import (
     Schedule,
     Setting,
     StreamProfile,
+    uuid4,
 )
 from ..security import CredentialCipher
+from .backup_validation import BackupValidationError, normalized_export
 
 FORMAT_VERSION = 1
 ENCRYPTED_HEADER = b"CWBACKUP1\n"
+MAX_BACKUP_BYTES = 100 * 1024 * 1024
+MAX_EXPORT_BYTES = 32 * 1024 * 1024
 
 
 def export_configuration(
@@ -184,8 +189,8 @@ def create_backup(
     include_credentials: bool = False,
     passphrase: str | None = None,
 ) -> bytes:
-    if include_credentials and not passphrase:
-        raise ValueError("A passphrase is required to include credentials")
+    if include_credentials and (not passphrase or len(passphrase) < 12):
+        raise ValueError("A passphrase of at least 12 characters is required to include credentials")
     document = export_configuration(db, cipher, include_credentials=include_credentials)
     archive = _configuration_zip(document)
     if not include_credentials:
@@ -198,29 +203,43 @@ def create_backup(
 
 
 def read_backup(payload: bytes, *, passphrase: str | None = None) -> dict[str, Any]:
+    if len(payload) > MAX_BACKUP_BYTES:
+        raise BackupValidationError("Backup exceeds the 100 MiB limit")
     if payload.startswith(ENCRYPTED_HEADER):
         if not passphrase:
-            raise ValueError("This backup is encrypted; provide its passphrase")
+            raise BackupValidationError("This backup is encrypted; provide its passphrase")
+        if len(payload) < len(ENCRYPTED_HEADER) + 16 + 12 + 16:
+            raise BackupValidationError("Encrypted backup is truncated")
         offset = len(ENCRYPTED_HEADER)
         salt = payload[offset : offset + 16]
         nonce = payload[offset + 16 : offset + 28]
         encrypted = payload[offset + 28 :]
         key = _derive_backup_key(passphrase, salt)
-        payload = AESGCM(key).decrypt(nonce, encrypted, ENCRYPTED_HEADER)
-    with zipfile.ZipFile(io.BytesIO(payload), "r") as archive:
-        document = json.loads(archive.read("mosaivue-export.json"))
-    validate_export(document)
-    return document
+        try:
+            payload = AESGCM(key).decrypt(nonce, encrypted, ENCRYPTED_HEADER)
+        except InvalidTag as exc:
+            raise BackupValidationError("Incorrect passphrase or damaged encrypted backup") from exc
+    try:
+        with zipfile.ZipFile(io.BytesIO(payload), "r") as archive:
+            entries = archive.infolist()
+            matches = [entry for entry in entries if entry.filename == "mosaivue-export.json"]
+            if len(entries) > 16 or len(matches) != 1:
+                raise BackupValidationError("Backup must contain exactly one configuration document")
+            entry = matches[0]
+            if entry.file_size > MAX_EXPORT_BYTES:
+                raise BackupValidationError("Expanded configuration exceeds the 32 MiB limit")
+            with archive.open(entry) as handle:
+                data = handle.read(MAX_EXPORT_BYTES + 1)
+            if len(data) > MAX_EXPORT_BYTES:
+                raise BackupValidationError("Expanded configuration exceeds the 32 MiB limit")
+            document = json.loads(data)
+    except (zipfile.BadZipFile, KeyError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise BackupValidationError("Backup does not contain a readable configuration document") from exc
+    return normalized_export(document, FORMAT_VERSION)
 
 
 def validate_export(document: dict[str, Any]) -> None:
-    if document.get("format") != "mosaivue-configuration":
-        raise ValueError("Not a Mosaivue configuration export")
-    if document.get("format_version") != FORMAT_VERSION:
-        raise ValueError(f"Unsupported export version: {document.get('format_version')}")
-    for key in ("cameras", "layouts", "rotation_groups", "display_profiles", "schedules"):
-        if not isinstance(document.get(key, []), list):
-            raise ValueError(f"Invalid {key} section")
+    normalized_export(document, FORMAT_VERSION)
 
 
 def import_configuration(
@@ -230,55 +249,62 @@ def import_configuration(
     *,
     merge: bool = True,
 ) -> dict[str, int]:
-    validate_export(document)
+    document = normalized_export(document, FORMAT_VERSION)
+    # SQLite's legacy transaction mode does not begin a transaction for a
+    # SAVEPOINT. Start one explicitly so releasing our savepoint cannot commit
+    # the caller's surrounding unit of work.
+    connection = db.connection()
+    if connection.dialect.name == "sqlite" and not connection.connection.driver_connection.in_transaction:
+        connection.exec_driver_sql("BEGIN")
+    with db.begin_nested():
+        return _import_validated_configuration(db, cipher, document, merge=merge)
+
+
+def _import_validated_configuration(
+    db: Session, cipher: CredentialCipher, document: dict[str, Any], *, merge: bool
+) -> dict[str, int]:
+    previous_active = db.scalar(select(Layout).where(Layout.active.is_(True)).order_by(Layout.name)) if merge else None
+    active_id = previous_active.id if previous_active else None
     if not merge:
         for model in (
-            Schedule,
-            LayoutRevision,
-            Layout,
-            RotationGroup,
-            StreamProfile,
-            Camera,
-            Credential,
-            DisplayProfile,
-            Setting,
+            Schedule, LayoutRevision, Layout, RotationGroup, StreamProfile,
+            Camera, Credential, DisplayProfile, Setting,
         ):
             db.execute(delete(model))
         db.flush()
+        db.expire_all()
 
     counts = {"cameras": 0, "layouts": 0, "rotation_groups": 0, "display_profiles": 0, "schedules": 0}
     camera_map: dict[str, str] = {}
+    profile_map: dict[str, str] = {}
     display_map: dict[str, str] = {}
     rotation_map: dict[str, str] = {}
     layout_map: dict[str, str] = {}
 
-    for raw in document.get("display_profiles", []):
+    for raw in document["display_profiles"]:
         existing = db.scalar(select(DisplayProfile).where(DisplayProfile.name == raw["name"])) if merge else None
         item = existing or DisplayProfile(name=raw["name"])
         for field in ("output_name", "width", "height", "refresh_rate", "rotation", "prevent_blanking"):
-            setattr(item, field, raw.get(field))
+            setattr(item, field, raw[field])
         if existing is None:
             db.add(item)
         db.flush()
         display_map[raw["id"]] = item.id
         counts["display_profiles"] += 1
 
-    for raw in document.get("cameras", []):
+    for raw in document["cameras"]:
         existing = db.scalar(select(Camera).where(Camera.name == raw["name"])) if merge else None
-        if existing:
-            camera = existing
-            camera.stream_profiles.clear()
-            if camera.credential:
-                db.delete(camera.credential)
-                camera.credential = None
-        else:
-            camera = Camera(name=raw["name"])
+        camera = existing or Camera(name=raw["name"])
+        if existing is None:
             db.add(camera)
         for field in ("description", "enabled", "vendor", "model", "host", "tags", "location"):
-            setattr(camera, field, raw.get(field))
-        credential_raw = raw.get("credential") or {}
+            setattr(camera, field, raw[field])
+        credential_raw = raw["credential"]
+        # A sanitized export deliberately omits secrets; merging it must not
+        # erase the working local credential. A replacement has no old secret.
         if credential_raw.get("included"):
-            credential = Credential(username=credential_raw.get("username"), encrypted_secret="")
+            credential = camera.credential or Credential(encrypted_secret="")
+            credential.username = credential_raw.get("username")
             db.add(credential)
             db.flush()
             credential.encrypted_secret = cipher.encrypt(
@@ -286,99 +312,113 @@ def import_configuration(
             )
             camera.credential = credential
         db.flush()
-        for stream in raw.get("stream_profiles", []):
-            camera.stream_profiles.append(
-                StreamProfile(
-                    name=stream["name"],
-                    url=stream["url"],
-                    transport=stream.get("transport", "tcp"),
-                    codec=stream.get("codec"),
-                    width=stream.get("width"),
-                    height=stream.get("height"),
-                    fps=stream.get("fps"),
-                    bitrate=stream.get("bitrate"),
-                    latency_profile=stream.get("latency_profile", "low"),
-                    priority=stream.get("priority", 0),
-                )
-            )
+        by_id = {profile.id: profile for profile in camera.stream_profiles}
+        by_name = {profile.name: profile for profile in camera.stream_profiles}
+        pairs = [(stream, by_id.get(stream["id"]) or by_name.get(stream["name"])) for stream in raw["stream_profiles"]]
+        retained = [profile for _, profile in pairs if profile is not None]
+        if len({profile.id for profile in retained}) != len(retained):
+            raise BackupValidationError("Imported profile identities conflict with existing profile names")
+        for profile in list(camera.stream_profiles):
+            if profile not in retained:
+                camera.stream_profiles.remove(profile)
+            else:
+                profile.name = f"__restore_{uuid4()}"
         db.flush()
+        for stream, profile in pairs:
+            if profile is None:
+                profile = StreamProfile()
+                camera.stream_profiles.append(profile)
+            for field in ("name", "url", "transport", "codec", "width", "height", "fps", "bitrate", "latency_profile", "priority"):
+                setattr(profile, field, stream[field])
+            db.flush()
+            profile_map[stream["id"]] = profile.id
         camera_map[raw["id"]] = camera.id
         counts["cameras"] += 1
 
-    for raw in document.get("rotation_groups", []):
+    for raw in document["rotation_groups"]:
         existing = db.scalar(select(RotationGroup).where(RotationGroup.name == raw["name"])) if merge else None
         item = existing or RotationGroup(name=raw["name"])
-        entries = []
-        for entry in raw.get("camera_entries", []):
-            mapped = camera_map.get(entry.get("camera_id"))
-            if mapped:
-                entries.append({**entry, "camera_id": mapped})
-        item.camera_entries = entries
-        for field in (
-            "interval_seconds",
-            "order_mode",
-            "enabled",
-            "preconnect",
-            "failure_behavior",
-            "rotate_together_group",
-            "start_position",
-        ):
-            setattr(item, field, raw.get(field))
+        item.camera_entries = [
+            {**entry, "camera_id": camera_map[entry["camera_id"]],
+             "stream_profile_id": profile_map.get(entry.get("stream_profile_id"))}
+            for entry in raw["camera_entries"]
+        ]
+        for field in ("interval_seconds", "order_mode", "enabled", "preconnect", "failure_behavior", "rotate_together_group", "start_position"):
+            setattr(item, field, raw[field])
         if existing is None:
             db.add(item)
         db.flush()
         rotation_map[raw["id"]] = item.id
         counts["rotation_groups"] += 1
 
-    for raw in document.get("layouts", []):
+    for raw in document["layouts"]:
         existing = db.scalar(select(Layout).where(Layout.name == raw["name"])) if merge else None
         layout = existing or Layout(name=raw["name"])
         if existing:
             layout.revisions.clear()
-        layout.description = raw.get("description", "")
-        layout.active = bool(raw.get("active", False))
-        layout.display_profile_id = display_map.get(raw.get("display_profile_id"))
+            # Delete the old (layout_id, revision) pairs before inserting their
+            # replacements. Unit-of-work inserts otherwise precede deletions.
+            db.flush()
+        layout.description = raw["description"]
+        layout.display_profile_id = display_map.get(raw["display_profile_id"])
         if existing is None:
             db.add(layout)
         db.flush()
-        revisions = raw.get("revisions") or []
-        for revision_raw in revisions:
-            data = _remap_layout_data(revision_raw["data"], camera_map, rotation_map)
-            layout.revisions.append(
-                LayoutRevision(
-                    revision=int(revision_raw["revision"]),
-                    status=revision_raw.get("status", "draft"),
-                    data=data,
-                )
-            )
-        layout.current_revision = max((item.revision for item in layout.revisions), default=1)
+        for revision_raw in raw["revisions"]:
+            layout.revisions.append(LayoutRevision(
+                revision=revision_raw["revision"],
+                status=revision_raw.get("status", "draft"),
+                data=_remap_layout_data(revision_raw["data"], camera_map, rotation_map, profile_map),
+            ))
+        layout.current_revision = raw["current_revision"]
+        if active_id is None and raw.get("active", False):
+            active_id = layout.id
         db.flush()
         layout_map[raw["id"]] = layout.id
         counts["layouts"] += 1
 
-    for raw in document.get("schedules", []):
-        mapped_layout = layout_map.get(raw.get("layout_id"))
-        if not mapped_layout:
-            continue
+    for raw in document["schedules"]:
         existing = db.scalar(select(Schedule).where(Schedule.name == raw["name"])) if merge else None
-        item = existing or Schedule(name=raw["name"], layout_id=mapped_layout)
-        item.layout_id = mapped_layout
+        item = existing or Schedule(name=raw["name"])
+        item.layout_id = layout_map[raw["layout_id"]]
         for field in ("enabled", "days", "start_time", "end_time", "priority"):
-            setattr(item, field, raw.get(field))
+            setattr(item, field, raw[field])
         if existing is None:
             db.add(item)
         counts["schedules"] += 1
-
-    for key, value in document.get("settings", {}).items():
+    for key, value in document["settings"].items():
         setting = db.get(Setting, key) or Setting(key=key, value=value)
         setting.value = value
-        db.merge(setting)
+        db.add(setting)
+    db.flush()
+    from ..schemas import LayoutData
+    from .layouts import LayoutService
+
+    service = LayoutService(db)
+    for layout in service.list():
+        layout.active = layout.id == active_id
+        revision = service.current_revision(layout)
+        if revision is None:
+            raise BackupValidationError("Merged configuration contains a layout with no current revision")
+        errors, _ = service.validate(LayoutData.model_validate(revision.data))
+        if errors:
+            raise BackupValidationError("Merged configuration leaves a layout with missing camera, stream profile, or rotation references")
+        if layout.active:
+            revision.status = "active"
+    # Validate untouched groups as well: merging a camera must not leave an
+    # unrelated rotation pointing to one of its removed profiles.
+    owners = dict(db.execute(select(StreamProfile.id, StreamProfile.camera_id)).all())
+    for group in db.scalars(select(RotationGroup)):
+        for entry in group.camera_entries:
+            if entry.get("stream_profile_id") is not None and owners.get(entry["stream_profile_id"]) != entry.get("camera_id"):
+                raise BackupValidationError("Merged configuration leaves a rotation group with a missing stream profile")
     db.flush()
     return counts
 
 
 def _remap_layout_data(
-    data: dict[str, Any], camera_map: dict[str, str], rotation_map: dict[str, str]
+    data: dict[str, Any], camera_map: dict[str, str], rotation_map: dict[str, str],
+    profile_map: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     copied = json.loads(json.dumps(data))
     for slot in copied.get("slots", []):
@@ -387,4 +427,6 @@ def _remap_layout_data(
                 slot[key] = camera_map[slot[key]]
         if slot.get("rotation_group_id") in rotation_map:
             slot["rotation_group_id"] = rotation_map[slot["rotation_group_id"]]
+        if profile_map and slot.get("stream_profile_id") in profile_map:
+            slot["stream_profile_id"] = profile_map[slot["stream_profile_id"]]
     return copied

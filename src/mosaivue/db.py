@@ -65,10 +65,7 @@ def get_session_factory() -> sessionmaker[Session]:
 
 
 def init_db(path: Path | str | None = None) -> Engine:
-    if path is not None or _engine is None:
-        engine = configure_database(path)
-    else:
-        engine = get_engine()
+    engine = configure_database(path) if path is not None or _engine is None else get_engine()
     # Import models before metadata creation.
     from . import models  # noqa: F401
 

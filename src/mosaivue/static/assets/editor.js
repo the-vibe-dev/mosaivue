@@ -1,6 +1,8 @@
 import { api } from './api.js';
 import { newId } from './ids.js';
-import { templateGeometry } from './templates.js';
+import { setGeometry } from './forms.js';
+import { setNavigationGuard } from './router.js';
+import { gridGeometry, templateGeometry } from './templates.js';
 import { escapeHtml, icon, toast } from './ui.js';
 function cloneData(value) {
     return structuredClone(value);
@@ -57,6 +59,15 @@ export class LayoutEditor {
     clipboard = [];
     keyHandler = (event) => this.onKeyDown(event);
     resizeObserver;
+    savedData = '';
+    busy = false;
+    destroyed = false;
+    beforeUnloadHandler = (event) => {
+        if (!this.isDirty())
+            return;
+        event.preventDefault();
+        event.returnValue = '';
+    };
     constructor(host, layout, cameras, groups, onSaved) {
         this.host = host;
         this.layout = layout;
@@ -72,19 +83,27 @@ export class LayoutEditor {
             grid_columns: 12,
             grid_rows: 12,
         });
+        this.savedData = JSON.stringify(this.data);
         this.recordHistory();
     }
     mount() {
         document.addEventListener('keydown', this.keyHandler);
+        window.addEventListener('beforeunload', this.beforeUnloadHandler);
+        setNavigationGuard(() => !this.isDirty() || confirm('Discard unsaved layout changes?'));
         this.render();
     }
     destroy() {
+        this.destroyed = true;
         document.removeEventListener('keydown', this.keyHandler);
+        window.removeEventListener('beforeunload', this.beforeUnloadHandler);
+        setNavigationGuard(null);
         this.resizeObserver?.disconnect();
         for (const url of this.previewUrls.values())
             URL.revokeObjectURL(url);
     }
     render() {
+        if (this.destroyed)
+            return;
         const selectedSlots = this.data.slots.filter((slot) => this.selected.has(slot.id));
         const outputWidth = this.data.output_width ?? 1920;
         const outputHeight = this.data.output_height ?? 1080;
@@ -94,7 +113,7 @@ export class LayoutEditor {
         <header class="editor-toolbar">
           <div class="editor-title-block">
             <a class="icon-button" href="/layouts" data-route aria-label="Back to layouts">${icon('chevron', 'icon-back')}</a>
-            <div><strong>${escapeHtml(this.layout.name)}</strong><span>Revision ${this.layout.current_revision}${this.layout.active ? ' · active' : ''}</span></div>
+            <div><strong>${escapeHtml(this.layout.name)}</strong><span>Revision ${this.layout.current_revision}${this.isDirty() ? ' · Unsaved changes' : ' · Saved'}${this.layout.active ? ' · active' : ''}</span></div>
           </div>
           <div class="toolbar-cluster">
             <button class="icon-button" data-action="undo" title="Undo (Ctrl+Z)" ${this.historyIndex <= 0 ? 'disabled' : ''}>${icon('undo')}</button>
@@ -117,12 +136,19 @@ export class LayoutEditor {
               ${this.cameraLibraryHtml(this.cameras)}
             </div>
             <div class="pane-section">
-              <div class="pane-heading compact"><div><h2>Templates</h2></div></div>
+              <div class="pane-heading compact"><div><h2>Templates</h2><p>Featured camera</p></div></div>
               <div class="template-grid">
                 ${Array.from({ length: 9 }, (_, index) => {
             const count = index + 2;
             const tiles = templateGeometry(count).map(([x, y, width, height]) => `<i style="left:${x * 100}%;top:${y * 100}%;width:${width * 100}%;height:${height * 100}%"></i>`).join('');
             return `<button data-template="${count}" title="Featured layout for ${count} cameras"><span class="template-preview template-featured">${tiles}</span><small>${count} cameras</small></button>`;
+        }).join('')}
+              </div>
+              <div class="pane-heading compact"><div><h2>Even grids</h2><p>Equal-sized camera tiles</p></div></div>
+              <div class="template-grid">
+                ${[2, 3, 4].map((size) => {
+            const tiles = gridGeometry(size).map(([x, y, width, height]) => `<i style="left:${x * 100}%;top:${y * 100}%;width:${width * 100}%;height:${height * 100}%"></i>`).join('');
+            return `<button data-template="grid-${size}" title="${size} by ${size} equal grid"><span class="template-preview template-featured">${tiles}</span><small>${size} × ${size} grid</small></button>`;
         }).join('')}
               </div>
             </div>
@@ -225,9 +251,11 @@ export class LayoutEditor {
       </div>`;
     }
     cameraInspector(slot) {
+        const camera = this.cameras.find((item) => item.id === (slot.selected_camera_id ?? slot.camera_id));
         return `<div class="inspector-section"><label class="field-label">Camera</label><select class="select" data-field="camera_id">
       <option value="">Select camera…</option>${this.cameras.map((camera) => `<option value="${camera.id}" ${(slot.selected_camera_id ?? slot.camera_id) === camera.id ? 'selected' : ''}>${escapeHtml(camera.name)}</option>`).join('')}
-      </select><label class="field-label">Stream selection</label><select class="select" data-field="stream_selection"><option value="automatic" ${slot.stream_selection === 'automatic' ? 'selected' : ''}>Automatic for tile size</option><option value="manual" ${slot.stream_selection === 'manual' ? 'selected' : ''}>Manual profile</option></select></div>`;
+      </select><label class="field-label">Stream selection</label><select class="select" data-field="stream_selection"><option value="automatic" ${slot.stream_selection === 'automatic' ? 'selected' : ''}>Automatic for tile size</option><option value="manual" ${slot.stream_selection === 'manual' ? 'selected' : ''}>Manual profile</option></select>
+      ${slot.stream_selection === 'manual' ? `<label class="field-label">Stream profile</label><select class="select" data-field="stream_profile_id" aria-label="Stream profile"><option value="">Select profile…</option>${camera?.stream_profiles.map((profile) => `<option value="${profile.id}" ${slot.stream_profile_id === profile.id ? 'selected' : ''}>${escapeHtml(profile.name)}${profile.width && profile.height ? ` · ${profile.width} × ${profile.height}` : ''}</option>`).join('') ?? ''}</select>` : ''}</div>`;
     }
     rotationInspector(slot) {
         return `<div class="inspector-section"><label class="field-label">Rotation group</label><select class="select" data-field="rotation_group_id"><option value="">Select group…</option>${this.groups.map((group) => `<option value="${group.id}" ${slot.rotation_group_id === group.id ? 'selected' : ''}>${escapeHtml(group.name)} · ${group.interval_seconds}s</option>`).join('')}</select></div>`;
@@ -279,6 +307,9 @@ export class LayoutEditor {
         this.host.querySelectorAll('[data-template]').forEach((button) => button.addEventListener('click', () => this.applyTemplate(button.dataset.template ?? '')));
         this.host.querySelectorAll('[data-field]').forEach((input) => input.addEventListener('change', () => this.updateField(input)));
         this.host.querySelectorAll('[data-geometry]').forEach((input) => input.addEventListener('change', () => this.updateGeometry(input)));
+        const locked = this.data.slots.find((slot) => this.selected.has(slot.id))?.locked;
+        if (this.selected.size === 1 && locked)
+            this.host.querySelectorAll('[data-field], [data-geometry]').forEach((input) => { input.disabled = true; });
     }
     attachLibraryDragEvents() {
         this.host.querySelectorAll('.camera-library-item').forEach((item) => {
@@ -295,18 +326,22 @@ export class LayoutEditor {
         });
     }
     pointerDown(event) {
+        if (this.busy || event.button !== 0)
+            return;
         const element = event.target.closest('.canvas-slot');
         if (!element)
             return;
         const slot = this.data.slots.find((item) => item.id === element.dataset.slotId);
         if (!slot)
             return;
-        if (this.selectedCameraId && !event.target.closest('[data-resize]')) {
+        if (this.selectedCameraId && !slot.locked && !event.target.closest('[data-resize]')) {
             const camera = this.cameras.find((item) => item.id === this.selectedCameraId);
             if (camera) {
                 slot.camera_id = camera.id;
                 slot.selected_camera_id = null;
                 slot.rotation_group_id = null;
+                slot.stream_profile_id = null;
+                slot.stream_selection = 'automatic';
                 slot.type = 'fixed';
                 slot.name = camera.name;
                 slot.label = camera.name;
@@ -338,6 +373,8 @@ export class LayoutEditor {
             const dy = (move.clientY - startY) / rect.height;
             changed ||= Math.abs(dx) > 0.001 || Math.abs(dy) > 0.001;
             for (const current of this.data.slots.filter((item) => this.selected.has(item.id))) {
+                if (current.locked)
+                    continue;
                 const original = originals.get(current.id);
                 if (resize && current.id === slot.id) {
                     let left = original.x;
@@ -422,13 +459,19 @@ export class LayoutEditor {
         this.render();
     }
     applyTemplate(template) {
-        const count = Number(template);
-        if (!Number.isInteger(count) || count < 2 || count > 10)
+        const grid = /^grid-([234])$/.exec(template);
+        const size = Number(grid?.[1]);
+        const count = grid ? size * size : Number(template);
+        if (!grid && (!Number.isInteger(count) || count < 2 || count > 10))
             return;
-        if (this.data.slots.length > count && !confirm(`This template has ${count} tiles. Remove ${this.data.slots.length - count} extra tiles?`))
-            return;
-        const geometry = templateGeometry(count);
         const existing = this.data.slots;
+        if (existing.some((slot) => slot.locked)) {
+            toast('Unlock tiles before applying a template', 'warning');
+            return;
+        }
+        if (existing.length > count && !confirm(`This template has ${count} tiles. Remove ${existing.length - count} extra tiles?`))
+            return;
+        const geometry = grid ? gridGeometry(size) : templateGeometry(count);
         const used = new Set(existing.map((slot) => slot.camera_id).filter(Boolean));
         const available = this.cameras.filter((camera) => camera.enabled && !used.has(camera.id));
         this.data.slots = geometry.map(([x, y, width, height], index) => {
@@ -446,18 +489,30 @@ export class LayoutEditor {
     }
     updateField(input) {
         const slot = this.data.slots.find((item) => this.selected.has(item.id));
-        if (!slot)
+        if (!slot || slot.locked || this.busy)
             return;
         const field = input.dataset.field;
         const value = input.value;
         if (field === 'camera_id') {
             slot.camera_id = value || null;
+            if (value && slot.type === 'empty')
+                slot.type = 'fixed';
             slot.selected_camera_id = null;
+            slot.stream_profile_id = null;
+            slot.stream_selection = 'automatic';
             const camera = this.cameras.find((item) => item.id === value);
             if (camera) {
                 slot.name = camera.name;
                 slot.label = camera.name;
             }
+        }
+        else if (field === 'stream_profile_id') {
+            slot.stream_profile_id = value || null;
+        }
+        else if (field === 'stream_selection') {
+            slot.stream_selection = value;
+            const camera = this.cameras.find((item) => item.id === (slot.selected_camera_id ?? slot.camera_id));
+            slot.stream_profile_id = value === 'manual' ? camera?.stream_profiles[0]?.id ?? null : null;
         }
         else if (field === 'rotation_group_id') {
             slot.rotation_group_id = value || null;
@@ -465,13 +520,20 @@ export class LayoutEditor {
         else {
             slot[field] = value;
             if (field === 'type') {
+                slot.stream_profile_id = null;
+                slot.stream_selection = 'automatic';
+                slot.selected_camera_id = null;
                 if (value === 'rotation') {
                     slot.camera_id = null;
                     slot.rotation_group_id ||= this.groups[0]?.id ?? null;
                 }
-                if (value === 'fixed') {
+                if (value === 'fixed' || value === 'manual') {
                     slot.rotation_group_id = null;
-                    slot.camera_id ||= this.cameras[0]?.id ?? null;
+                    slot.camera_id ||= this.cameras.find((camera) => camera.enabled)?.id ?? null;
+                }
+                if (value === 'empty') {
+                    slot.camera_id = null;
+                    slot.rotation_group_id = null;
                 }
             }
         }
@@ -480,17 +542,16 @@ export class LayoutEditor {
     }
     updateGeometry(input) {
         const slot = this.data.slots.find((item) => this.selected.has(item.id));
-        if (!slot)
+        if (!slot || slot.locked || this.busy)
             return;
         const field = input.dataset.geometry;
-        const value = clamp(Number.parseFloat(input.value) / 100, 0, 1);
-        slot[field] = value;
-        slot.width = clamp(slot.width, 0.01, 1 - slot.x);
-        slot.height = clamp(slot.height, 0.01, 1 - slot.y);
+        Object.assign(slot, setGeometry(slot, field, Number.parseFloat(input.value)));
         this.recordHistory();
         this.render();
     }
     async action(name) {
+        if (this.busy)
+            return;
         switch (name) {
             case 'undo':
                 this.undo();
@@ -547,6 +608,10 @@ export class LayoutEditor {
         }
     }
     async save(apply) {
+        if (this.busy)
+            return;
+        this.busy = true;
+        this.host.inert = true;
         try {
             const updated = await api(`/layouts/${this.layout.id}`, {
                 method: 'PUT',
@@ -554,6 +619,7 @@ export class LayoutEditor {
             });
             this.layout = updated;
             this.data = cloneData(updated.revision.data);
+            this.savedData = JSON.stringify(this.data);
             this.history = [];
             this.historyIndex = -1;
             this.recordHistory();
@@ -571,11 +637,19 @@ export class LayoutEditor {
         catch (error) {
             toast(error instanceof Error ? error.message : 'Unable to save layout', 'error');
         }
+        finally {
+            this.busy = false;
+            this.host.inert = false;
+            this.render();
+        }
     }
     async revert() {
+        if (this.isDirty() && !confirm('Discard unsaved layout changes and restore the saved revision?'))
+            return;
         try {
             this.layout = await api(`/layouts/${this.layout.id}`);
             this.data = cloneData(this.layout.revision.data);
+            this.savedData = JSON.stringify(this.data);
             this.selected.clear();
             this.history = [];
             this.historyIndex = -1;
@@ -590,7 +664,7 @@ export class LayoutEditor {
     deleteSelected() {
         if (!this.selected.size)
             return;
-        this.data.slots = this.data.slots.filter((slot) => !this.selected.has(slot.id));
+        this.data.slots = this.data.slots.filter((slot) => !this.selected.has(slot.id) || slot.locked);
         this.selected.clear();
         this.recordHistory();
         this.render();
@@ -611,7 +685,7 @@ export class LayoutEditor {
         this.render();
     }
     align(axis) {
-        const slots = this.data.slots.filter((slot) => this.selected.has(slot.id));
+        const slots = this.data.slots.filter((slot) => this.selected.has(slot.id) && !slot.locked);
         if (slots.length < 2)
             return;
         const value = Math.min(...slots.map((slot) => slot[axis]));
@@ -620,7 +694,7 @@ export class LayoutEditor {
         this.render();
     }
     distribute(axis) {
-        const slots = this.data.slots.filter((slot) => this.selected.has(slot.id)).sort((a, b) => a[axis] - b[axis]);
+        const slots = this.data.slots.filter((slot) => this.selected.has(slot.id) && !slot.locked).sort((a, b) => a[axis] - b[axis]);
         if (slots.length < 3)
             return;
         const first = slots[0];
@@ -658,6 +732,8 @@ export class LayoutEditor {
         this.render();
     }
     onKeyDown(event) {
+        if (this.busy || document.querySelector('dialog[open]'))
+            return;
         const target = event.target;
         if (['INPUT', 'SELECT', 'TEXTAREA'].includes(target.tagName))
             return;
@@ -725,6 +801,8 @@ export class LayoutEditor {
     async loadPreview(slotId, cameraId) {
         try {
             const blob = await api(`/cameras/${cameraId}/preview?width=640`);
+            if (this.destroyed || !this.data.slots.some((slot) => slot.id === slotId && (slot.selected_camera_id ?? slot.camera_id) === cameraId))
+                return;
             const old = this.previewUrls.get(slotId);
             if (old)
                 URL.revokeObjectURL(old);
@@ -738,6 +816,9 @@ export class LayoutEditor {
         for (const url of this.previewUrls.values())
             URL.revokeObjectURL(url);
         this.previewUrls.clear();
+    }
+    isDirty() {
+        return JSON.stringify(this.data) !== this.savedData;
     }
 }
 //# sourceMappingURL=editor.js.map

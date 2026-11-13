@@ -117,7 +117,7 @@ def build_plan(paths: list[Path], *, default_width: int = 1920, default_height: 
     names = _find_array(merged, ("camera_names", "cam_names", "names"))
     urls = _find_array(merged, ("camera_feeds", "camera_urls", "feeds", "urls"))
     if not urls:
-        for key, value in merged.items():
+        for value in merged.values():
             if isinstance(value, list) and any(str(item).startswith("rtsp") for item in value):
                 urls = [str(item) for item in value]
                 break
@@ -139,7 +139,7 @@ def build_plan(paths: list[Path], *, default_width: int = 1920, default_height: 
     for source_path, data in layout_sources:
         rectangles = _find_array(data, ("window_positions", "positions", "rectangles", "windows"))
         if not rectangles:
-            for key, value in data.items():
+            for value in data.values():
                 if isinstance(value, list) and value and all(_parse_rect(str(item)) for item in value):
                     rectangles = [str(item) for item in value]
                     break

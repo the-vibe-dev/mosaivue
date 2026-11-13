@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request, Response, status
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select, text
 
 from ..config import load_settings
 from ..constants import SETUP_TOKEN_PATH
-from ..models import User
+from ..models import User, WebSession
 from ..schemas import LoginRequest, PasswordChangeRequest, SetupRequest
 from ..security import (
     consume_setup_token,
@@ -15,8 +15,12 @@ from ..security import (
     verify_password,
     verify_setup_token,
 )
-from ..services.renderer_config import renderer_config, request_renderer_restart, select_renderer_backend
-from .dependencies import Auth, CSRF, DB, login_limiter
+from ..services.renderer_config import (
+    renderer_config,
+    request_renderer_restart,
+    select_renderer_backend,
+)
+from .dependencies import CSRF, DB, Auth, login_limiter
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
 
@@ -36,13 +40,20 @@ def _set_session_cookie(response: Response, token: str, max_age: int, *, secure:
 @router.get("/setup/status")
 def setup_status(db: DB) -> dict[str, object]:
     count = db.scalar(select(func.count()).select_from(User)) or 0
-    return {"setup_required": count == 0, "token_file_exists": SETUP_TOKEN_PATH.exists(),
+    try:
+        token_available = SETUP_TOKEN_PATH.stat().st_size > 0
+    except OSError:
+        token_available = False
+    return {"setup_required": count == 0, "token_file_exists": token_available,
             "renderer": renderer_config()}
 
 
 @router.post("/setup", status_code=201)
 def setup(payload: SetupRequest, request: Request, response: Response, db: DB) -> dict[str, object]:
     login_limiter.check(request.client.host if request.client else "unknown")
+    # Serialize the one-time setup check and account creation across simultaneous
+    # browser requests. A count followed by an unlocked insert allows two admins.
+    db.execute(text("BEGIN IMMEDIATE"))
     count = db.scalar(select(func.count()).select_from(User)) or 0
     if count:
         raise HTTPException(status_code=409, detail="Initial setup is already complete")
@@ -95,6 +106,7 @@ def login(payload: LoginRequest, request: Request, response: Response, db: DB) -
         remote_addr=remote,
         user_agent=request.headers.get("user-agent"),
     )
+    db.commit()
     _set_session_cookie(response, created.token, settings.session_hours * 3600, secure=settings.secure_cookies)
     return {
         "user": {"id": user.id, "username": user.username, "is_admin": user.is_admin},
@@ -108,6 +120,7 @@ def logout(response: Response, request: Request, db: DB, _: CSRF) -> dict[str, b
     token = request.cookies.get("mosaivue_session")
     if token:
         revoke_session(db, token)
+    db.commit()
     response.delete_cookie("mosaivue_session", path="/")
     return {"ok": True}
 
@@ -126,4 +139,8 @@ def change_password(payload: PasswordChangeRequest, auth: CSRF, db: DB) -> dict[
     if not verify_password(payload.current_password, auth.user.password_hash):
         raise HTTPException(status_code=403, detail="Current password is incorrect")
     auth.user.password_hash = hash_password(payload.new_password)
+    db.execute(delete(WebSession).where(
+        WebSession.user_id == auth.user.id, WebSession.id != auth.session.id
+    ))
+    db.commit()
     return {"ok": True}

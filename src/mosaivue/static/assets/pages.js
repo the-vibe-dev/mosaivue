@@ -1,10 +1,19 @@
 import { api, download } from './api.js';
 import { LayoutEditor } from './editor.js';
 import { newId } from './ids.js';
-import { templateGeometry } from './templates.js';
+import { credentialEdit, filterCameras, mergeProfileEdit, rotationEntries } from './forms.js';
+import { onvifDialog } from './onvif.js';
+import { renderSchedules } from './schedules.js';
+import { gridGeometry, templateGeometry } from './templates.js';
 import { navigate } from './router.js';
 import { badge, emptyState, escapeHtml, formatBytes, formatDuration, icon, openDialog, pageHeader, skeleton, toast } from './ui.js';
-const content = () => document.querySelector('#page-content');
+// Each route owns its render target; an older request cannot overwrite a newer page.
+const content = () => {
+    const host = document.querySelector('#page-content');
+    const root = document.createElement('div');
+    host.replaceChildren(root);
+    return root;
+};
 let activeEditor = null;
 function cleanEditor() {
     activeEditor?.destroy();
@@ -108,7 +117,8 @@ export async function dashboardPage() {
             try {
                 const result = await api('/renderer/config', { method: 'PUT', body: JSON.stringify({ renderer_backend: select.value }) });
                 toast(result.restart_requested ? 'Display player is restarting' : 'Display player setting saved', 'success');
-                window.setTimeout(() => void dashboardPage(), 12000);
+                window.setTimeout(() => { if (location.pathname === '/' && root.isConnected)
+                    void dashboardPage(); }, 12000);
             }
             catch (error) {
                 select.value = rendererConfig.selected;
@@ -120,38 +130,64 @@ export async function dashboardPage() {
         });
     }
     catch (error) {
-        root.innerHTML = pageHeader('Camera wall', 'Live health and appliance overview') + emptyState('offline', 'Unable to load dashboard', errorMessage(error), '<button class="button button-primary" onclick="location.reload()">Retry</button>');
+        root.innerHTML = pageHeader('Camera wall', 'Live health and appliance overview') + emptyState('offline', 'Unable to load dashboard', errorMessage(error), '<a class="button button-primary" href="/">Retry</a>');
     }
 }
 export async function camerasPage() {
     cleanEditor();
     const root = content();
-    root.innerHTML = pageHeader('Cameras', 'Save each RTSP camera once and reuse it everywhere', `<button class="button button-primary" id="add-camera">${icon('plus')} Add camera</button>`) + skeleton(5);
+    root.innerHTML = pageHeader('Cameras', 'Save each RTSP camera once and reuse it everywhere', `<button class="button button-secondary" id="import-onvif">${icon('upload')} Import ONVIF</button><button class="button button-primary" id="add-camera">${icon('plus')} Add camera</button>`) + skeleton(5);
+    let query = '';
+    let cameraStatus = 'all';
     const refresh = async () => {
         const cameras = await api('/cameras');
-        root.innerHTML = `${pageHeader('Cameras', 'Save each RTSP camera once and reuse it everywhere', `<button class="button button-primary" id="add-camera">${icon('plus')} Add camera</button>`)}
+        root.innerHTML = `${pageHeader('Cameras', 'Save each RTSP camera once and reuse it everywhere', `<button class="button button-secondary" id="import-onvif">${icon('upload')} Import ONVIF</button><button class="button button-primary" id="add-camera">${icon('plus')} Add camera</button>`)}
       <section class="panel table-panel">
-        <div class="table-toolbar"><label class="search-field">${icon('search')}<input id="camera-filter" type="search" placeholder="Search cameras, locations, or tags" /></label><span>${cameras.length} saved camera${cameras.length === 1 ? '' : 's'}</span></div>
+        <div class="table-toolbar"><label class="search-field">${icon('search')}<input id="camera-filter" type="search" aria-label="Search cameras" placeholder="Search name, host, vendor, or tags" value="${escapeHtml(query)}" /></label><select class="select camera-status-filter" id="camera-status-filter" aria-label="Camera status filter">${['all', 'enabled', 'disabled'].map((value) => `<option value="${value}" ${cameraStatus === value ? 'selected' : ''}>${value === 'all' ? 'All cameras' : value[0].toUpperCase() + value.slice(1)}</option>`).join('')}</select><span id="camera-result-count" aria-live="polite"></span></div>
         ${cameras.length ? `<div class="data-table-wrap"><table class="data-table"><thead><tr><th>Camera</th><th>Location</th><th>Profiles</th><th>Tags</th><th>Status</th><th></th></tr></thead><tbody>${cameras.map((camera) => `
           <tr data-camera-row="${camera.id}" data-filter="${escapeHtml(`${camera.name} ${camera.location ?? ''} ${camera.tags.join(' ')}`.toLowerCase())}">
             <td><div class="table-primary"><span class="camera-avatar">${icon('camera')}</span><span><strong>${escapeHtml(camera.name)}</strong><small>${escapeHtml(camera.vendor)}${camera.model ? ` · ${escapeHtml(camera.model)}` : ''}</small></span></div></td>
             <td>${escapeHtml(camera.location ?? camera.host ?? '—')}</td>
-            <td>${camera.stream_profiles.map((profile) => `<span class="profile-label">${escapeHtml(profile.name)}${profile.width ? ` ${profile.width}p` : ''}</span>`).join(' ')}</td>
+            <td>${camera.stream_profiles.map((profile) => `<span class="profile-label">${escapeHtml(profile.name)}${profile.width && profile.height ? ` ${profile.width} × ${profile.height}` : ''}</span>`).join(' ')}</td>
             <td><div class="tag-list">${camera.tags.slice(0, 3).map((tag) => `<span>${escapeHtml(tag)}</span>`).join('') || '—'}</div></td>
             <td>${badge(camera.enabled ? 'Enabled' : 'Disabled', camera.enabled ? 'good' : 'neutral')}</td>
-            <td><div class="row-actions"><button class="icon-button" data-camera-test="${camera.id}" title="Test stream">${icon('test')}</button><button class="icon-button" data-camera-preview="${camera.id}" title="Preview">${icon('play')}</button><button class="icon-button" data-camera-edit="${camera.id}" title="Edit">${icon('edit')}</button><button class="icon-button" data-camera-delete="${camera.id}" title="Delete">${icon('trash')}</button></div></td>
+            <td><div class="row-actions"><button class="icon-button" data-camera-test="${camera.id}" title="Test stream">${icon('test')}</button><button class="icon-button" data-camera-preview="${camera.id}" title="Preview">${icon('play')}</button><button class="icon-button" data-camera-edit="${camera.id}" title="Edit">${icon('edit')}</button><button class="icon-button" data-camera-duplicate="${camera.id}" title="Duplicate camera" aria-label="Duplicate ${escapeHtml(camera.name)}">${icon('copy')}</button><button class="icon-button" data-camera-delete="${camera.id}" title="Delete">${icon('trash')}</button></div></td>
           </tr>`).join('')}</tbody></table></div>` : emptyState('camera', 'No cameras saved', 'Add an RTSP stream to create the reusable camera registry.', `<button class="button button-primary" id="empty-add-camera">${icon('plus')} Add your first camera</button>`)}
-      </section>`;
+      <p id="camera-no-matches" class="filter-empty" hidden>No cameras match these filters.</p></section>`;
         const openCreate = () => cameraDialog(null, refresh);
         root.querySelector('#add-camera')?.addEventListener('click', openCreate);
+        root.querySelector('#import-onvif')?.addEventListener('click', () => onvifDialog(refresh));
         root.querySelector('#empty-add-camera')?.addEventListener('click', openCreate);
         const filter = root.querySelector('#camera-filter');
-        filter?.addEventListener('input', () => root.querySelectorAll('[data-camera-row]').forEach((row) => { row.hidden = !(row.dataset.filter ?? '').includes(filter.value.toLowerCase()); }));
+        const statusFilter = root.querySelector('#camera-status-filter');
+        const applyFilter = () => {
+            query = filter?.value ?? '';
+            cameraStatus = statusFilter?.value ?? 'all';
+            const matches = new Set(filterCameras(cameras, query, cameraStatus).map((camera) => camera.id));
+            root.querySelectorAll('[data-camera-row]').forEach((row) => { row.hidden = !matches.has(row.dataset.cameraRow ?? ''); });
+            root.querySelector('#camera-result-count').textContent = `${matches.size} of ${cameras.length} cameras`;
+            root.querySelector('#camera-no-matches').hidden = !cameras.length || matches.size > 0;
+        };
+        filter?.addEventListener('input', applyFilter);
+        statusFilter?.addEventListener('change', applyFilter);
+        applyFilter();
+        root.querySelectorAll('[data-camera-duplicate]').forEach((button) => button.addEventListener('click', async () => {
+            button.disabled = true;
+            try {
+                await api(`/cameras/${button.dataset.cameraDuplicate}/duplicate`, { method: 'POST' });
+                toast('Camera duplicated and disabled. Edit its address before enabling.', 'success');
+                await refresh();
+            }
+            catch (error) {
+                toast(errorMessage(error), 'error');
+                button.disabled = false;
+            }
+        }));
         root.querySelectorAll('[data-camera-edit]').forEach((button) => button.addEventListener('click', () => cameraDialog(cameras.find((item) => item.id === button.dataset.cameraEdit) ?? null, refresh)));
         root.querySelectorAll('[data-camera-test]').forEach((button) => button.addEventListener('click', () => void testCamera(button.dataset.cameraTest)));
         root.querySelectorAll('[data-camera-preview]').forEach((button) => button.addEventListener('click', () => void previewCamera(button.dataset.cameraPreview)));
         root.querySelectorAll('[data-camera-delete]').forEach((button) => button.addEventListener('click', async () => {
-            if (!confirm('Delete this camera? Existing layouts that reference it will become invalid.'))
+            if (!confirm('Delete this camera? Remove its layout and rotation references first.'))
                 return;
             try {
                 await api(`/cameras/${button.dataset.cameraDelete}`, { method: 'DELETE' });
@@ -180,6 +216,7 @@ function cameraDialog(camera, refresh) {
       <label class="span-two"><span>Description</span><textarea class="textarea" name="description">${escapeHtml(camera?.description ?? '')}</textarea></label>
       <label><span>Username</span><input class="input" name="username" autocomplete="off" value="${escapeHtml(camera?.username ?? '')}" /></label>
       <label><span>Password ${camera?.has_password ? '<small>Leave blank to keep saved password</small>' : ''}</span><input class="input" type="password" name="password" autocomplete="new-password" /></label>
+      ${camera?.has_password ? '<label class="checkbox-row span-two"><input type="checkbox" name="clear_credentials" /><span>Remove saved username and password</span></label>' : ''}
       <label class="span-two"><span>Tags</span><input class="input" name="tags" value="${escapeHtml(camera?.tags.join(', ') ?? '')}" placeholder="outside, door, priority" /></label>
       <label class="checkbox-row span-two"><input type="checkbox" name="enabled" ${camera?.enabled === false ? '' : 'checked'} /><span>Camera enabled</span></label>
     </div>
@@ -190,27 +227,29 @@ function cameraDialog(camera, refresh) {
         onSubmit: async (modal) => {
             const form = modal.querySelector('form');
             const value = (name) => form.elements.namedItem(name)?.value.trim() ?? '';
-            const streamProfiles = [...modal.querySelectorAll('[data-profile]')].map((row, index) => ({
+            const streamProfiles = [...modal.querySelectorAll('[data-profile]')].map((row, index) => mergeProfileEdit(profiles[Number(row.dataset.profile)], {
                 name: row.querySelector('[name="profile_name"]').value.trim() || `Profile ${index + 1}`,
                 url: row.querySelector('[name="profile_url"]').value.trim(),
                 transport: row.querySelector('[name="profile_transport"]').value,
                 latency_profile: row.querySelector('[name="profile_latency"]').value,
                 width: Number(row.querySelector('[name="profile_width"]').value) || null,
                 height: Number(row.querySelector('[name="profile_height"]').value) || null,
-                priority: index,
+                priority: profiles[Number(row.dataset.profile)]?.priority ?? (Math.max(-1, ...profiles.map((profile) => profile.priority ?? 0)) + 1 + Number(row.dataset.profile) - profiles.length),
             })).filter((profile) => profile.url);
             if (!value('name') || !streamProfiles.length) {
                 toast('Name and at least one RTSP URL are required', 'warning');
                 return false;
             }
-            const password = value('password');
+            const password = form.elements.namedItem('password').value;
+            const clearCredentials = form.elements.namedItem('clear_credentials')?.checked ?? false;
             const payload = {
                 name: value('name'), location: value('location') || null, vendor: value('vendor') || 'generic', model: value('model') || null,
                 description: value('description'), username: value('username') || null, tags: value('tags').split(',').map((item) => item.trim()).filter(Boolean),
                 enabled: form.elements.namedItem('enabled').checked, stream_profiles: streamProfiles,
             };
-            if (password || !camera)
-                payload.password = password;
+            Object.assign(payload, credentialEdit(password, clearCredentials));
+            if (clearCredentials)
+                delete payload.username;
             try {
                 await api(camera ? `/cameras/${camera.id}` : '/cameras', { method: camera ? 'PUT' : 'POST', body: JSON.stringify(payload) });
                 toast(camera ? 'Camera updated' : 'Camera added', 'success');
@@ -233,11 +272,11 @@ function cameraDialog(camera, refresh) {
 function profileFields(profile, index) {
     return `<div class="profile-form" data-profile="${index}"><div class="profile-form-head"><strong>Profile ${index + 1}</strong><button type="button" class="icon-button" data-remove-profile title="Remove profile">${icon('trash')}</button></div><div class="form-grid profile-grid">
     <label><span>Name</span><input class="input" name="profile_name" value="${escapeHtml(profile.name ?? 'Main')}" /></label>
-    <label class="profile-url"><span>RTSP / RTSPS URL</span><input class="input mono" name="profile_url" value="${escapeHtml(profile.url ?? '')}" placeholder="rtsp:// or rtsps://camera/stream" /></label>
+    <label class="profile-url"><span>RTSP / RTSPS URL</span><input class="input mono" name="profile_url" required value="${escapeHtml(profile.url ?? '')}" placeholder="rtsp:// or rtsps://camera/stream" /></label>
     <label><span>Transport</span><select class="select" name="profile_transport"><option value="tcp" ${profile.transport === 'tcp' ? 'selected' : ''}>TCP</option><option value="udp" ${profile.transport === 'udp' ? 'selected' : ''}>UDP</option><option value="auto" ${profile.transport === 'auto' ? 'selected' : ''}>Auto</option></select></label>
     <label><span>Latency</span><select class="select" name="profile_latency">${['ultra-low', 'low', 'normal', 'stable'].map((value) => `<option value="${value}" ${profile.latency_profile === value ? 'selected' : ''}>${value}</option>`).join('')}</select></label>
-    <label><span>Width</span><input class="input" type="number" name="profile_width" value="${profile.width ?? ''}" placeholder="1920" /></label>
-    <label><span>Height</span><input class="input" type="number" name="profile_height" value="${profile.height ?? ''}" placeholder="1080" /></label>
+    <label><span>Width</span><input class="input" type="number" name="profile_width" min="1" max="16384" value="${profile.width ?? ''}" placeholder="1920" /></label>
+    <label><span>Height</span><input class="input" type="number" name="profile_height" min="1" max="16384" value="${profile.height ?? ''}" placeholder="1080" /></label>
   </div></div>`;
 }
 function attachProfileRemove(dialog) {
@@ -253,7 +292,7 @@ async function testCamera(cameraId) {
     const dialog = openDialog({ title: 'Testing stream', body: `<div class="probe-progress"><span class="spinner"></span><p>Connecting and discovering the camera stream…</p></div>` });
     try {
         const result = await api(`/cameras/${cameraId}/test`, { method: 'POST' });
-        dialog.querySelector('.modal-body').innerHTML = result.success ? `<div class="probe-result success">${icon('check')}<h3>Stream connected</h3><dl class="detail-list"><div><dt>Response</dt><dd>${escapeHtml(result.response_time_ms)} ms</dd></div><div><dt>Codec</dt><dd>${escapeHtml(result.codec ?? 'Unknown')}</dd></div><div><dt>Resolution</dt><dd>${escapeHtml(result.width)} × ${escapeHtml(result.height)}</dd></div><div><dt>Frame rate</dt><dd>${escapeHtml(result.framerate ?? 'Unknown')}</dd></div></dl></div>` : `<div class="probe-result error">${icon('offline')}<h3>Connection failed</h3><p>${escapeHtml(result.error)}</p></div>`;
+        dialog.querySelector('.modal-body').innerHTML = result.success ? `<div class="probe-result success">${icon('check')}<h3>Stream connected</h3><dl class="detail-list"><div><dt>Response</dt><dd>${escapeHtml(result.response_time_ms)} ms</dd></div><div><dt>Codec</dt><dd>${escapeHtml(result.codec ?? 'Unknown')}</dd></div><div><dt>Resolution</dt><dd>${result.width && result.height ? `${escapeHtml(result.width)} × ${escapeHtml(result.height)}` : 'Not reported'}</dd></div><div><dt>Frame rate</dt><dd>${escapeHtml(result.framerate ?? 'Unknown')}</dd></div></dl></div>` : `<div class="probe-result error">${icon('offline')}<h3>Connection failed</h3><p>${escapeHtml(result.error)}</p></div>`;
     }
     catch (error) {
         dialog.querySelector('.modal-body').innerHTML = `<div class="probe-result error">${icon('offline')}<h3>Test unavailable</h3><p>${escapeHtml(errorMessage(error))}</p></div>`;
@@ -263,6 +302,8 @@ async function previewCamera(cameraId) {
     const dialog = openDialog({ title: 'Camera preview', body: `<div class="preview-loading"><span class="spinner"></span></div>`, wide: true });
     try {
         const blob = await api(`/cameras/${cameraId}/preview?width=960`);
+        if (!dialog.isConnected)
+            return;
         const url = URL.createObjectURL(blob);
         dialog.querySelector('.modal-body').innerHTML = `<img class="camera-preview-image" src="${url}" alt="Camera preview" />`;
         dialog.addEventListener('close', () => URL.revokeObjectURL(url));
@@ -283,7 +324,7 @@ export async function layoutsPage() {
             return `<article class="layout-row ${layout.active ? 'is-active' : ''}">
           <div class="mini-layout" style="background:${escapeHtml(layout.revision?.data.background ?? '#05080c')}">${slots.slice(0, 12).map((slot) => `<i style="left:${slot.x * 100}%;top:${slot.y * 100}%;width:${slot.width * 100}%;height:${slot.height * 100}%"></i>`).join('')}</div>
           <div class="layout-row-main"><div class="layout-name-line"><h2>${escapeHtml(layout.name)}</h2>${layout.active ? badge('Active', 'good') : ''}</div><p>${escapeHtml(layout.description || 'No description')}</p><span>${slots.length} slots · revision ${layout.current_revision} · updated ${new Date(layout.updated_at).toLocaleString()}</span></div>
-          <div class="layout-row-actions"><button class="button button-ghost" data-layout-activate="${layout.id}" ${layout.active ? 'disabled' : ''}>${icon('play')} Apply</button><a class="button button-secondary" href="/layouts/${layout.id}/edit" data-route>${icon('edit')} Edit</a><button class="icon-button" data-layout-revisions="${layout.id}" title="Revision history">${icon('logs')}</button><button class="icon-button" data-layout-delete="${layout.id}" title="Delete" ${layout.active ? 'disabled' : ''}>${icon('trash')}</button></div>
+          <div class="layout-row-actions"><button class="button button-ghost" data-layout-activate="${layout.id}" ${layout.active ? 'disabled' : ''}>${icon('play')} Apply</button><a class="button button-secondary" href="/layouts/${layout.id}/edit" data-route>${icon('edit')} Edit</a><button class="icon-button" data-layout-duplicate="${layout.id}" title="Duplicate layout" aria-label="Duplicate ${escapeHtml(layout.name)}">${icon('copy')}</button><button class="icon-button" data-layout-revisions="${layout.id}" title="Revision history">${icon('logs')}</button><button class="icon-button" data-layout-delete="${layout.id}" title="Delete" ${layout.active ? 'disabled' : ''}>${icon('trash')}</button></div>
         </article>`;
         }).join('') : emptyState('layout', 'No layouts yet', 'Create a visual layout, drag cameras into place, and apply it without rebooting.', `<button class="button button-primary" id="empty-create-layout">${icon('plus')} Create layout</button>`)}</div>`;
         const create = () => createLayoutDialog(cameras, refresh);
@@ -313,6 +354,19 @@ export async function layoutsPage() {
                 toast(errorMessage(error), 'error');
             }
         }));
+        root.querySelectorAll('[data-layout-duplicate]').forEach((button) => button.addEventListener('click', () => {
+            const source = layouts.find((item) => item.id === button.dataset.layoutDuplicate);
+            openDialog({ title: `Duplicate ${source.name}`, body: `<label><span>New layout name</span><input class="input" name="name" required maxlength="255" value="${escapeHtml(`${source.name} Copy`)}" /></label>`, submitLabel: 'Create copy', onSubmit: async (dialog) => {
+                    const data = structuredClone(source.revision?.data ?? initialLayoutData('empty', []));
+                    if (Array.isArray(data.slots))
+                        data.slots = data.slots.map((slot) => ({ ...slot, id: newId() }));
+                    const name = dialog.querySelector('[name="name"]').value.trim();
+                    await api('/layouts', { method: 'POST', body: JSON.stringify({ name, description: source.description, display_profile_id: source.display_profile_id, data }) });
+                    toast('Layout duplicated as a new draft', 'success');
+                    await refresh();
+                    return true;
+                } });
+        }));
         root.querySelectorAll('[data-layout-revisions]').forEach((button) => button.addEventListener('click', () => void revisionDialog(button.dataset.layoutRevisions, refresh)));
     };
     try {
@@ -325,7 +379,7 @@ export async function layoutsPage() {
 function createLayoutDialog(cameras, refresh) {
     const dialog = openDialog({
         title: 'Create layout',
-        body: `<div class="form-grid"><label><span>Name</span><input class="input" name="name" required placeholder="Main" /></label><label><span>Description</span><textarea class="textarea" name="description" placeholder="Primary camera wall"></textarea></label><fieldset><legend>Starting point</legend><div class="template-choice"><label><input type="radio" name="template" value="empty" checked /><span>Empty canvas</span></label>${Array.from({ length: 9 }, (_, index) => `<label><input type="radio" name="template" value="${index + 2}" /><span>${index + 2} cameras · featured first</span></label>`).join('')}</div></fieldset></div>`,
+        body: `<div class="form-grid"><label><span>Name</span><input class="input" name="name" required placeholder="Main" /></label><label><span>Description</span><textarea class="textarea" name="description" placeholder="Primary camera wall"></textarea></label><fieldset><legend>Starting point</legend><div class="template-choice"><label><input type="radio" name="template" value="empty" checked /><span>Empty canvas</span></label>${Array.from({ length: 9 }, (_, index) => `<label><input type="radio" name="template" value="${index + 2}" /><span>${index + 2} cameras · featured first</span></label>`).join('')}${[2, 3, 4].map((size) => `<label><input type="radio" name="template" value="grid-${size}" /><span>${size} × ${size} even grid</span></label>`).join('')}</div></fieldset></div>`,
         submitLabel: 'Create and edit',
         onSubmit: async (modal) => {
             const name = modal.querySelector('[name="name"]').value.trim();
@@ -351,10 +405,11 @@ function createLayoutDialog(cameras, refresh) {
     dialog.querySelector('[name="name"]')?.focus();
 }
 function initialLayoutData(template, cameras) {
+    const grid = /^grid-([234])$/.exec(template);
     const count = Number(template);
-    const geometry = Number.isInteger(count) && count >= 2 && count <= 10 ? templateGeometry(count) : [];
+    const geometry = grid ? gridGeometry(Number(grid[1])) : Number.isInteger(count) && count >= 2 && count <= 10 ? templateGeometry(count) : [];
     return { schema_version: 1, background: '#05080c', output_width: 1920, output_height: 1080, grid_columns: 12, grid_rows: 12, slots: geometry.map(([x, y, width, height], index) => {
-            const camera = cameras[index];
+            const camera = cameras.filter((item) => item.enabled)[index];
             return { id: newId(), name: camera?.name ?? `Slot ${index + 1}`, type: camera ? 'fixed' : 'empty', x, y, width, height, z_index: 0, enabled: true, camera_id: camera?.id ?? null, rotation_group_id: null, selected_camera_id: null, stream_profile_id: null, stream_selection: 'automatic', aspect_mode: 'cover', crop: { top: 0, right: 0, bottom: 0, left: 0 }, background: '#090d12', border: '#27313c', border_width: 0, label: camera?.name ?? `Slot ${index + 1}`, title_position: 'bottom-left', muted: true, locked: false, opacity: 1, pixel_override: null };
         }) };
 }
@@ -384,6 +439,8 @@ export async function layoutEditorPage(layoutId) {
     root.innerHTML = skeleton(6);
     try {
         const [layout, cameras, groups] = await Promise.all([api(`/layouts/${layoutId}`), api('/cameras'), api('/rotation-groups')]);
+        if (!root.isConnected)
+            return;
         root.innerHTML = '';
         activeEditor = new LayoutEditor(root, layout, cameras, groups);
         activeEditor.mount();
@@ -399,7 +456,7 @@ export async function rotationsPage() {
     root.innerHTML = pageHeader('Rotation groups', 'Rotate selected tiles independently while fixed cameras remain untouched', `<button class="button button-primary" id="add-rotation">${icon('plus')} New group</button>`) + skeleton(4);
     const refresh = async () => {
         const [groups, cameras] = await Promise.all([api('/rotation-groups'), api('/cameras')]);
-        root.innerHTML = `${pageHeader('Rotation groups', 'Rotate selected tiles independently while fixed cameras remain untouched', `<button class="button button-primary" id="add-rotation">${icon('plus')} New group</button>`)}<div class="rotation-grid">${groups.length ? groups.map((group) => `<article class="rotation-card"><div class="rotation-card-head"><span class="rotation-icon">${icon('rotate')}</span><div><h2>${escapeHtml(group.name)}</h2><p>Every ${group.interval_seconds} seconds · ${escapeHtml(group.order_mode)}</p></div>${badge(group.enabled ? 'Enabled' : 'Disabled', group.enabled ? 'good' : 'neutral')}</div><div class="rotation-camera-stack">${group.camera_entries.map((entry, index) => { const camera = cameras.find((item) => item.id === entry.camera_id); return `<span><i>${index + 1}</i>${escapeHtml(camera?.name ?? 'Missing camera')}</span>`; }).join('')}</div><dl class="compact-details"><div><dt>Preload</dt><dd>${escapeHtml(group.preconnect)}</dd></div><div><dt>Failure</dt><dd>${escapeHtml(group.failure_behavior)}</dd></div></dl><div class="card-actions"><button class="button button-ghost" data-rotation-pause="${group.id}">${icon('pause')} Pause</button><button class="button button-secondary" data-rotation-edit="${group.id}">${icon('edit')} Edit</button><button class="icon-button" data-rotation-delete="${group.id}">${icon('trash')}</button></div></article>`).join('') : emptyState('rotate', 'No rotation groups', 'Create a group, choose cameras and an interval, then assign it to any layout tile.', `<button class="button button-primary" id="empty-add-rotation">${icon('plus')} Create group</button>`)}</div>`;
+        root.innerHTML = `${pageHeader('Rotation groups', 'Rotate selected tiles independently while fixed cameras remain untouched', `<button class="button button-primary" id="add-rotation">${icon('plus')} New group</button>`)}<div class="rotation-grid">${groups.length ? groups.map((group) => `<article class="rotation-card"><div class="rotation-card-head"><span class="rotation-icon">${icon('rotate')}</span><div><h2>${escapeHtml(group.name)}</h2><p>Every ${group.interval_seconds} seconds · ${escapeHtml(group.order_mode)}</p></div>${badge(group.enabled ? 'Enabled' : 'Disabled', group.enabled ? 'good' : 'neutral')}</div><div class="rotation-camera-stack">${group.camera_entries.map((entry, index) => { const camera = cameras.find((item) => item.id === entry.camera_id); return `<span><i>${index + 1}</i>${escapeHtml(camera?.name ?? 'Missing camera')}</span>`; }).join('')}</div><dl class="compact-details"><div><dt>Preload</dt><dd>${escapeHtml(group.preconnect)}</dd></div><div><dt>Failure</dt><dd>${escapeHtml(group.failure_behavior === 'placeholder' ? 'hold (legacy placeholder setting)' : group.failure_behavior)}</dd></div></dl><div class="card-actions"><button class="button button-ghost" data-rotation-pause="${group.id}">${icon('pause')} Pause</button><button class="button button-ghost" data-rotation-resume="${group.id}">${icon('play')} Resume</button><button class="button button-secondary" data-rotation-edit="${group.id}">${icon('edit')} Edit</button><button class="icon-button" data-rotation-delete="${group.id}">${icon('trash')}</button></div></article>`).join('') : emptyState('rotate', 'No rotation groups', 'Create a group, choose cameras and an interval, then assign it to any layout tile.', `<button class="button button-primary" id="empty-add-rotation">${icon('plus')} Create group</button>`)}</div>`;
         const open = (group) => rotationDialog(group, cameras, refresh);
         root.querySelector('#add-rotation')?.addEventListener('click', () => open(null));
         root.querySelector('#empty-add-rotation')?.addEventListener('click', () => open(null));
@@ -407,6 +464,13 @@ export async function rotationsPage() {
         root.querySelectorAll('[data-rotation-pause]').forEach((button) => button.addEventListener('click', async () => { try {
             await api(`/rotation-groups/${button.dataset.rotationPause}/pause`, { method: 'POST' });
             toast('Rotation paused', 'success');
+        }
+        catch (error) {
+            toast(errorMessage(error), 'error');
+        } }));
+        root.querySelectorAll('[data-rotation-resume]').forEach((button) => button.addEventListener('click', async () => { try {
+            await api(`/rotation-groups/${button.dataset.rotationResume}/resume`, { method: 'POST' });
+            toast('Rotation resumed', 'success');
         }
         catch (error) {
             toast(errorMessage(error), 'error');
@@ -429,27 +493,57 @@ export async function rotationsPage() {
     }
 }
 function rotationDialog(group, cameras, refresh) {
-    const selected = new Set(group?.camera_entries.map((entry) => entry.camera_id) ?? []);
-    openDialog({ title: group ? `Edit ${group.name}` : 'New rotation group', wide: true, submitLabel: group ? 'Save group' : 'Create group', body: `<div class="form-grid two"><label><span>Name</span><input class="input" name="name" value="${escapeHtml(group?.name ?? '')}" required /></label><label><span>Interval seconds</span><input class="input" type="number" min="2" name="interval" value="${group?.interval_seconds ?? 15}" /></label><label><span>Order</span><select class="select" name="order">${['sequential', 'reverse', 'random', 'weighted'].map((value) => `<option value="${value}" ${group?.order_mode === value ? 'selected' : ''}>${value}</option>`).join('')}</select></label><label><span>Preload</span><select class="select" name="preconnect">${['off', 'next'].map((value) => `<option value="${value}" ${group?.preconnect === value ? 'selected' : ''}>${value}</option>`).join('')}</select></label><label><span>Failure behavior</span><select class="select" name="failure">${['skip', 'hold', 'placeholder'].map((value) => `<option value="${value}" ${group?.failure_behavior === value ? 'selected' : ''}>${value}</option>`).join('')}</select></label><label class="checkbox-row"><input type="checkbox" name="enabled" ${group?.enabled === false ? '' : 'checked'} /><span>Group enabled</span></label></div><div class="form-section-title"><div><strong>Cameras</strong><small>Checked order is the sequential rotation order.</small></div></div><div class="camera-check-list">${cameras.map((camera) => `<label><input type="checkbox" name="camera" value="${camera.id}" ${selected.has(camera.id) ? 'checked' : ''} /><span class="camera-avatar">${icon('camera')}</span><span><strong>${escapeHtml(camera.name)}</strong><small>${escapeHtml(camera.location ?? camera.host ?? '')}</small></span></label>`).join('')}</div>`, onSubmit: async (dialog) => {
-            const name = dialog.querySelector('[name="name"]').value.trim();
-            const interval = Number(dialog.querySelector('[name="interval"]').value);
-            const cameraIds = [...dialog.querySelectorAll('[name="camera"]:checked')].map((input) => input.value);
-            if (!name || !cameraIds.length) {
+    const existing = group?.camera_entries ?? [];
+    const included = new Set(existing.map((entry) => entry.camera_id));
+    const rows = [
+        ...existing.map((entry) => ({ camera: cameras.find((camera) => camera.id === entry.camera_id), entry, selected: true })),
+        ...cameras.filter((camera) => !included.has(camera.id)).map((camera) => ({ camera, entry: { camera_id: camera.id, weight: 1, stream_profile_id: null }, selected: false })),
+    ];
+    const dialog = openDialog({ title: group ? `Edit ${group.name}` : 'New rotation group', wide: true, submitLabel: group ? 'Save group' : 'Create group', body: `<div class="form-grid two">
+    <label><span>Name</span><input class="input" name="name" value="${escapeHtml(group?.name ?? '')}" required maxlength="255" /></label>
+    <label><span>Interval seconds</span><input class="input" type="number" min="2" max="86400" name="interval" value="${group?.interval_seconds ?? 15}" required /></label>
+    <label><span>Order</span><select class="select" name="order">${['sequential', 'reverse', 'random', 'weighted'].map((value) => `<option value="${value}" ${group?.order_mode === value ? 'selected' : ''}>${value}</option>`).join('')}</select></label>
+    <label><span>Preload</span><select class="select" name="preconnect">${['off', 'next'].map((value) => `<option value="${value}" ${(group?.preconnect ?? 'off') === value ? 'selected' : ''}>${value}</option>`).join('')}</select></label>
+    <label><span>Failure behavior</span><select class="select" name="failure">${['skip', 'hold', 'placeholder'].map((value) => `<option value="${value}" ${group?.failure_behavior === value ? 'selected' : ''} ${value === 'placeholder' ? 'disabled' : ''}>${value === 'placeholder' ? 'placeholder (legacy: hold behavior)' : value}</option>`).join('')}</select></label>
+    <label><span>Start at selected camera number</span><input class="input" type="number" min="1" step="1" name="start_position" value="${(group?.start_position ?? 0) + 1}" required /></label>
+    <label class="checkbox-row span-two"><input type="checkbox" name="enabled" ${group?.enabled === false ? '' : 'checked'} /><span>Group enabled</span></label>
+    </div><div class="form-section-title"><div><strong>Cameras and sequence</strong><small>Use Move up and Move down to set order. Weight controls weighted rotation.</small></div></div>
+    <div class="rotation-entry-list">${rows.map(({ camera, entry, selected }) => `<div class="rotation-entry" data-rotation-entry="${entry.camera_id}">
+      <label class="checkbox-row"><input type="checkbox" name="camera" ${selected ? 'checked' : ''} /><span><strong>${escapeHtml(camera?.name ?? 'Missing camera')}</strong><small>${escapeHtml(camera?.location ?? camera?.host ?? '')}</small></span></label>
+      <label><span>Profile</span><select class="select" name="entry_profile"><option value="">Automatic</option>${camera?.stream_profiles.map((profile) => `<option value="${profile.id}" ${entry.stream_profile_id === profile.id ? 'selected' : ''}>${escapeHtml(profile.name)}</option>`).join('') ?? ''}</select></label>
+      <label><span>Weight</span><input class="input" type="number" name="entry_weight" min="1" max="100" step="1" value="${entry.weight}" required /></label>
+      <div class="entry-order"><button type="button" class="button button-ghost button-small" data-entry-move="up" aria-label="Move ${escapeHtml(camera?.name ?? 'camera')} up">↑</button><button type="button" class="button button-ghost button-small" data-entry-move="down" aria-label="Move ${escapeHtml(camera?.name ?? 'camera')} down">↓</button></div>
+    </div>`).join('')}</div>`, onSubmit: async (modal) => {
+            const name = modal.querySelector('[name="name"]').value.trim();
+            const entries = rotationEntries([...modal.querySelectorAll('[data-rotation-entry]')].map((row) => ({ cameraId: row.dataset.rotationEntry, selected: row.querySelector('[name="camera"]').checked, weight: Number(row.querySelector('[name="entry_weight"]').value), profileId: row.querySelector('[name="entry_profile"]').value })));
+            if (!name || !entries.length) {
                 toast('Name and at least one camera are required', 'warning');
                 return false;
             }
-            const payload = { name, interval_seconds: interval, order_mode: dialog.querySelector('[name="order"]').value, enabled: dialog.querySelector('[name="enabled"]').checked, preconnect: dialog.querySelector('[name="preconnect"]').value, failure_behavior: dialog.querySelector('[name="failure"]').value, rotate_together_group: null, start_position: 0, camera_entries: cameraIds.map((camera_id) => ({ camera_id, weight: 1, stream_profile_id: null })) };
-            try {
-                await api(group ? `/rotation-groups/${group.id}` : '/rotation-groups', { method: group ? 'PUT' : 'POST', body: JSON.stringify(payload) });
-                toast('Rotation group saved', 'success');
-                await refresh();
-                return true;
-            }
-            catch (error) {
-                toast(errorMessage(error), 'error');
+            const startPosition = Number(modal.querySelector('[name="start_position"]').value) - 1;
+            if (startPosition >= entries.length) {
+                toast('Start position must refer to a selected camera', 'warning');
                 return false;
             }
-        } });
+            const payload = { name, interval_seconds: Number(modal.querySelector('[name="interval"]').value), order_mode: modal.querySelector('[name="order"]').value, enabled: modal.querySelector('[name="enabled"]').checked, preconnect: modal.querySelector('[name="preconnect"]').value, failure_behavior: modal.querySelector('[name="failure"]').value, rotate_together_group: group?.rotate_together_group ?? null, start_position: startPosition, camera_entries: entries };
+            await api(group ? `/rotation-groups/${group.id}` : '/rotation-groups', { method: group ? 'PUT' : 'POST', body: JSON.stringify(payload) });
+            toast('Rotation group saved', 'success');
+            await refresh();
+            return true;
+        },
+    });
+    dialog.querySelectorAll('[data-entry-move]').forEach((button) => button.addEventListener('click', () => {
+        const row = button.closest('[data-rotation-entry]');
+        if (button.dataset.entryMove === 'up' && row.previousElementSibling)
+            row.previousElementSibling.before(row);
+        if (button.dataset.entryMove === 'down' && row.nextElementSibling)
+            row.nextElementSibling.after(row);
+        button.focus();
+    }));
+}
+export async function schedulesPage() {
+    cleanEditor();
+    await renderSchedules(content());
 }
 export async function displayPage() {
     cleanEditor();
@@ -588,16 +682,36 @@ export async function backupPage() {
         } } }); });
     const fileInput = root.querySelector('#restore-file');
     root.querySelector('#restore-backup')?.addEventListener('click', () => fileInput.click());
-    fileInput.addEventListener('change', () => { const file = fileInput.files?.[0]; if (!file)
-        return; openDialog({ title: 'Restore configuration', body: `<p>Selected: <strong>${escapeHtml(file.name)}</strong></p><label><span>Passphrase, if encrypted</span><input class="input" type="password" name="passphrase" /></label><label class="checkbox-row"><input type="checkbox" name="merge" checked /><span>Merge with existing configuration</span></label>`, submitLabel: 'Validate and restore', onSubmit: async (dialog) => { const data = new FormData(); data.append('file', file); data.append('passphrase', dialog.querySelector('[name="passphrase"]').value); data.append('merge', String(dialog.querySelector('[name="merge"]').checked)); try {
-            const result = await api('/backup/restore', { method: 'POST', body: data });
-            toast(`Restored ${Object.values(result.imported).reduce((a, b) => a + b, 0)} objects`, 'success');
-            return true;
-        }
-        catch (error) {
-            toast(errorMessage(error), 'error');
-            return false;
-        } } }); });
+    fileInput.addEventListener('change', () => {
+        const file = fileInput.files?.[0];
+        if (!file)
+            return;
+        fileInput.value = '';
+        openDialog({ title: 'Restore configuration', body: `<p>Selected: <strong>${escapeHtml(file.name)}</strong></p><label><span>Passphrase, if encrypted</span><input class="input" type="password" name="passphrase" /></label><label class="checkbox-row"><input type="checkbox" name="merge" checked /><span>Merge with existing configuration</span></label>`, submitLabel: 'Validate and restore', onSubmit: async (dialog) => {
+                const data = new FormData();
+                data.append('file', file);
+                data.append('passphrase', dialog.querySelector('[name="passphrase"]').value);
+                data.append('merge', String(dialog.querySelector('[name="merge"]').checked));
+                try {
+                    const result = await api('/backup/restore', { method: 'POST', body: data });
+                    const count = Object.values(result.imported).reduce((a, b) => a + b, 0);
+                    const warning = result.renderer_warning || (result.renderer_applied === false ? 'Configuration was restored, but the display has not applied it. Restart the renderer or apply a layout.' : null);
+                    toast(`Restored ${count} objects${warning ? ' · display needs attention' : ''}`, warning ? 'warning' : 'success');
+                    root.querySelector('#restore-result')?.remove();
+                    const message = document.createElement('section');
+                    message.id = 'restore-result';
+                    message.className = 'panel restore-result';
+                    message.setAttribute('role', 'status');
+                    message.innerHTML = `<h2>${warning ? 'Configuration restored; display needs attention' : 'Configuration restored'}</h2><p>${count} objects restored.</p>${warning ? `<p>${escapeHtml(warning)}</p><a class="button button-secondary" href="/renderer" data-route>Open renderer</a>` : ''}`;
+                    root.append(message);
+                    return true;
+                }
+                catch (error) {
+                    toast(errorMessage(error), 'error');
+                    return false;
+                }
+            } });
+    });
 }
 export async function aboutPage() {
     cleanEditor();
@@ -621,7 +735,8 @@ export async function remotePage() {
         root.querySelectorAll('[data-remote-layout]').forEach((button) => button.addEventListener('click', async () => { try {
             await api(`/layouts/${button.dataset.remoteLayout}/activate`, { method: 'POST' });
             toast('Layout applied', 'success');
-            await remotePage();
+            if (root.isConnected)
+                await remotePage();
         }
         catch (error) {
             toast(errorMessage(error), 'error');

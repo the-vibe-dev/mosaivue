@@ -4,7 +4,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$ROOT/installer/lib.sh"
 cw_require_root
 NON_INTERACTIVE=0; REMOVE_CONFIG=0; REMOVE_DATA=0; REMOVE_LOGS=0; REMOVE_USER=0
-PREFIX="$(cat /etc/mosaivue/install-prefix 2>/dev/null || printf '/opt/mosaivue')"
+PREFIX=""
 while (($#)); do
   case "$1" in
     --yes) NON_INTERACTIVE=1 ;;
@@ -18,6 +18,13 @@ while (($#)); do
     *) cw_die "Unknown option: $1" ;;
   esac; shift
 done
+[[ -n "$PREFIX" ]] || PREFIX="$(cw_read_root_metadata /etc/mosaivue/install-prefix /opt/mosaivue)"
+PREFIX="$(cw_validate_install_prefix "$PREFIX")"
+if [[ -e "$PREFIX" ]]; then
+  [[ -d "$PREFIX/releases" && -f "$PREFIX/current/pyproject.toml" ]] && \
+    grep -Eq '^name = "mosaivue"$' "$PREFIX/current/pyproject.toml" || \
+    cw_die "Refusing to remove a directory without a Mosaivue installation: $PREFIX"
+fi
 if [[ "$NON_INTERACTIVE" -eq 0 ]]; then
   echo "Mosaivue application files and services will be removed. Configuration is preserved by default."
   read -r -p "Remove saved configuration and master key? [y/N] " v; [[ "$v" =~ ^[Yy]$ ]] && REMOVE_CONFIG=1
@@ -27,9 +34,13 @@ if [[ "$NON_INTERACTIVE" -eq 0 ]]; then
 fi
 systemctl disable --now mosaivue-server.service mosaivue-renderer.service 2>/dev/null || true
 rm -f /etc/systemd/system/mosaivue-server.service /etc/systemd/system/mosaivue-renderer.service /etc/systemd/system/mosaivue.target
+# Remove only drop-ins owned by the installer; preserve administrator overrides.
+rm -f /etc/systemd/system/mosaivue-renderer.service.d/rockchip-devices.conf \
+  /etc/systemd/system/mosaivue-renderer.service.d/gpu-devices.conf \
+  /etc/systemd/system/mosaivue-renderer.service.d/normalize-rotation.conf
 rm -f /usr/lib/tmpfiles.d/mosaivue.conf /usr/local/bin/mosaivue
 systemctl daemon-reload
-rm -rf "$PREFIX"
+rm -rf -- "$PREFIX"
 [[ "$REMOVE_CONFIG" -eq 1 ]] && rm -rf /etc/mosaivue || cw_log "Preserved /etc/mosaivue"
 [[ "$REMOVE_DATA" -eq 1 ]] && rm -rf /var/lib/mosaivue || cw_log "Preserved /var/lib/mosaivue"
 [[ "$REMOVE_LOGS" -eq 1 ]] && rm -rf /var/log/mosaivue /var/cache/mosaivue

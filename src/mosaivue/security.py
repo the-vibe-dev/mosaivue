@@ -5,6 +5,7 @@ import hashlib
 import hmac
 import os
 import secrets
+import tempfile
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -24,9 +25,8 @@ SCRYPT_P = 1
 
 def secure_write(path: Path, data: bytes, mode: int = 0o600) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
-    fd = os.open(temporary, flags, mode)
+    fd, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    temporary = Path(temporary_name)
     try:
         with os.fdopen(fd, "wb") as handle:
             handle.write(data)
@@ -50,8 +50,23 @@ class KeyManager:
                 raise RuntimeError(f"Invalid Mosaivue master key length at {self.path}")
             return key
         key = secrets.token_bytes(32)
-        secure_write(self.path, key, 0o600)
-        return key
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        fd, temporary_name = tempfile.mkstemp(prefix=f".{self.path.name}.", dir=self.path.parent)
+        temporary = Path(temporary_name)
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(key)
+                handle.flush()
+                os.fsync(handle.fileno())
+            # Publish a complete key without replacing one another service just
+            # created. API and renderer can start concurrently.
+            try:
+                os.link(temporary, self.path)
+            except FileExistsError:
+                return self.load()
+            return key
+        finally:
+            temporary.unlink(missing_ok=True)
 
     def load(self) -> bytes:
         key = self.path.read_bytes()
@@ -125,11 +140,18 @@ def verify_setup_token(candidate: str, path: Path = SETUP_TOKEN_PATH) -> bool:
     if not path.exists():
         return False
     expected = path.read_text(encoding="utf-8").strip()
-    return hmac.compare_digest(candidate.strip(), expected)
+    return bool(expected) and hmac.compare_digest(candidate.strip().encode("utf-8"), expected.encode("utf-8"))
 
 
 def consume_setup_token(path: Path = SETUP_TOKEN_PATH) -> None:
-    path.unlink(missing_ok=True)
+    try:
+        path.unlink(missing_ok=True)
+    except PermissionError:
+        # Installed appliances protect directory entries from the service user;
+        # only this token file is group-writable for one-time consumption.
+        with path.open("wb") as handle:
+            handle.flush()
+            os.fsync(handle.fileno())
 
 
 def strip_url_credentials(url: str) -> tuple[str, str | None, str | None]:
@@ -137,6 +159,8 @@ def strip_url_credentials(url: str) -> tuple[str, str | None, str | None]:
     username = unquote(parts.username) if parts.username is not None else None
     password = unquote(parts.password) if parts.password is not None else None
     host = parts.hostname or ""
+    if ":" in host:
+        host = f"[{host}]"
     if parts.port:
         host += f":{parts.port}"
     clean = urlunsplit((parts.scheme, host, parts.path, parts.query, parts.fragment))
@@ -144,10 +168,12 @@ def strip_url_credentials(url: str) -> tuple[str, str | None, str | None]:
 
 
 def inject_url_credentials(url: str, username: str | None, password: str | None) -> str:
-    if not username:
+    if username is None:
         return url
     parts = urlsplit(url)
     host = parts.hostname or ""
+    if ":" in host:
+        host = f"[{host}]"
     if parts.port:
         host += f":{parts.port}"
     userinfo = quote(username, safe="")
@@ -158,7 +184,7 @@ def inject_url_credentials(url: str, username: str | None, password: str | None)
 
 
 def session_token_hash(token: str) -> str:
-    return hashlib.sha256(token.encode("ascii")).hexdigest()
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
 @dataclass(slots=True)

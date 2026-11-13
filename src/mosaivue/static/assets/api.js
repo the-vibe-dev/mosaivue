@@ -7,7 +7,21 @@ export class ApiError extends Error {
         super(message);
         this.status = status;
         this.detail = detail;
+        this.name = 'ApiError';
     }
+}
+export function apiErrorMessage(detail, fallback) {
+    const value = typeof detail === 'object' && detail && 'detail' in detail
+        ? detail.detail : detail;
+    if (Array.isArray(value)) {
+        return value.map((item) => {
+            const field = item.loc?.filter((part) => part !== 'body').join(' → ');
+            return `${field ? `${field}: ` : ''}${item.msg ?? 'Invalid value'}`;
+        }).join('; ') || fallback;
+    }
+    if (typeof value === 'string' && value.trim() && !value.trim().startsWith('<'))
+        return value.slice(0, 1000);
+    return fallback;
 }
 export function setCsrf(value) {
     csrfToken = value;
@@ -31,16 +45,13 @@ export async function api(path, options = {}) {
         credentials: 'same-origin',
     });
     if (!response.ok) {
-        let detail;
+        const body = await response.text();
+        let detail = body;
         try {
-            detail = await response.json();
+            detail = JSON.parse(body);
         }
-        catch {
-            detail = await response.text();
-        }
-        const message = typeof detail === 'object' && detail && 'detail' in detail
-            ? String(detail.detail)
-            : response.statusText;
+        catch { /* Plain-text proxy errors are valid responses. */ }
+        const message = apiErrorMessage(detail, response.statusText || `Request failed (${response.status})`);
         throw new ApiError(response.status, message, detail);
     }
     if (response.status === 204)
@@ -83,12 +94,14 @@ export async function logout() {
     setCsrf('');
 }
 export async function download(path, filename, options = {}) {
-    const blob = await api(path, options);
+    const result = await api(path, options);
+    const blob = result instanceof Blob ? result : new Blob([JSON.stringify(result, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = url;
     anchor.download = filename;
     anchor.click();
-    URL.revokeObjectURL(url);
+    // Give the browser time to begin consuming the download before releasing it.
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 //# sourceMappingURL=api.js.map

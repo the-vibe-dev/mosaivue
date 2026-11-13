@@ -8,11 +8,13 @@ Mosaivue is a local-first camera-monitor appliance for Raspberry Pi and Linux. I
 
 Mosaivue is designed for Raspberry Pi OS Lite and does not require a desktop session. The control plane, camera credentials, layouts, health data, and previews stay on the appliance. There is no required cloud account, analytics service, or telemetry.
 
-> **Beta status:** v0.1.0b2 is the first public beta. In a 23-hour sample window, the tested Pi 3B+, ROCK Pi 4B+, and Ubuntu GPU walls each kept seven of seven tiles LIVE with one renderer process and advancing rotation. The ROCK Pi's installer-managed 640×360 normalization kept its two 16:9 rotating feeds on matching caps through more than 5,500 cuts; one fixed tile recovered from a cold-start retry. These are site results, not stream-count guarantees. Other camera aspect ratios and Raspberry Pi 4/5 physical output remain unqualified. See [beta notes](docs/beta-release.md).
+> **Review candidate: 0.1.0b3.** This archive contains the November 12, 2026 reliability and onboarding improvements. It is not a published or hardware-qualified release. Read [the review](docs/review/report.md), [validation results](docs/review/validation.md), and [upgrade instructions](docs/review/upgrade.md).
+
+> **Published baseline (0.1.0b2):** v0.1.0b2 is the first public beta. In a 23-hour sample window, the tested Pi 3B+, ROCK Pi 4B+, and Ubuntu GPU walls each kept seven of seven tiles LIVE with one renderer process and advancing rotation. The ROCK Pi's installer-managed 640×360 normalization kept its two 16:9 rotating feeds on matching caps through more than 5,500 cuts; one fixed tile recovered from a cold-start retry. These are site results, not stream-count guarantees. Other camera aspect ratios and Raspberry Pi 4/5 physical output remain unqualified. See [beta notes](docs/beta-release.md).
 
 ## What is included
 
-- Persistent camera registry with multiple RTSP profiles per camera
+- Persistent camera registry with stable multiple RTSP profiles per camera, plus ONVIF Media1 profile import from a known device-service endpoint
 - Credentials encrypted at rest with AES-256-GCM and omitted from API responses and sanitized exports. The legacy OMXPlayer backend passes a resolved stream URL to its local player process; see [security boundaries](docs/security.md).
 - Reusable layouts stored in normalized coordinates, with optional pixel overrides
 - Drag, resize, multi-select, align, distribute, duplicate, lock, undo, redo, copy, paste, grid snap, and exact geometry in the browser editor
@@ -23,11 +25,11 @@ Mosaivue is designed for Raspberry Pi OS Lite and does not require a desktop ses
 - Per-stream health, reconnect backoff, placeholder fallback, and independent stream restart
 - Layout revision history and last-known-good activation behavior
 - Focus/fullscreen camera mode with restore
-- Optional schedules, phone-friendly display remote, and Server-Sent Events
+- Browser-managed overnight/day schedules, phone-friendly display remote, and session-scoped Server-Sent Events
 - FastAPI REST API and OpenAPI documentation
 - CLI and Textual TUI
 - Raspberry Pi/Linux capability detection, diagnostics, benchmark, optimizer recommendations, and sanitized support bundles
-- Sanitized configuration export plus passphrase-encrypted complete backups
+- Sanitized configuration export plus passphrase-encrypted configuration backups including camera credentials (not full operating-system images)
 - `displaycameras` configuration migration with dry-run reporting
 - Idempotent installer, conservative uninstaller, update helper, systemd hardening, source releases, and Debian packaging scripts
 - Unit, integration, API, renderer-contract, migration, backup, and frontend tests
@@ -83,9 +85,9 @@ It downloads a versioned source release, verifies its SHA-256 checksum, and runs
 To install a source archive directly:
 
 ```bash
-tar -xzf mosaivue-0.1.0b2-source.tar.gz
-cd mosaivue-0.1.0b2
-sudo ./install.sh
+tar -xzf mosaivue-0.1.0b3-source.tar.gz
+cd mosaivue-0.1.0b3
+sudo bash installer/install-local.sh
 ```
 
 Useful options:
@@ -109,6 +111,8 @@ Mosaivue installed successfully.
   Terminal UI:  sudo -u mosaivue mosaivue tui
   Diagnostics:  mosaivue doctor
 ```
+
+The online bootstrap downloads the newest published release, which may be older than this review candidate. Use the local source command above to install this candidate.
 
 The bootstrap script can be inspected before the `sudo bash` step. It downloads the newest public release archive and checks its SHA-256 checksum before installing.
 
@@ -186,7 +190,7 @@ The renderer and API are separate processes. A renderer crash does not remove th
 |---|---|
 | `/etc/mosaivue/config.json` | Non-secret application settings |
 | `/etc/mosaivue/master.key` | Local credential-encryption key, mode `0640` and readable only by root and the dedicated `mosaivue` group |
-| `/etc/mosaivue/setup-token` | One-time setup token; deleted after use |
+| `/etc/mosaivue/setup-token` | One-time setup token; consumed after use (removed where permitted; otherwise emptied) |
 | `/etc/mosaivue/install-prefix` | Installation root used by update and uninstall helpers |
 | `/var/lib/mosaivue/mosaivue.db` | SQLite configuration database |
 | `/var/lib/mosaivue/capabilities.json` | Last hardware/renderer capability report |

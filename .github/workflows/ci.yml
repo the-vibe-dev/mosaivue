@@ -21,8 +21,10 @@ jobs:
           cache: pip
       - run: sudo apt-get update && sudo apt-get install -y python3-gi gir1.2-gstreamer-1.0 gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good
       - run: pip install -e '.[dev]'
+      - run: ruff check src/mosaivue tests scripts
       - run: python -m compileall -q src
       - run: bash scripts/test-installer-rotation.sh
+      - run: bash scripts/test-installer-paths.sh
       - run: pytest --cov=mosaivue --cov-report=xml
 
   frontend:

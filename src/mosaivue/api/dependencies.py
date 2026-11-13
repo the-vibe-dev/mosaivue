@@ -4,6 +4,7 @@ import hmac
 import time
 from collections import defaultdict, deque
 from dataclasses import dataclass
+from threading import Lock
 from typing import Annotated
 
 from fastapi import Cookie, Depends, Header, HTTPException, Request, status
@@ -65,7 +66,7 @@ def require_csrf(
 ) -> AuthContext:
     if request.method in {"GET", "HEAD", "OPTIONS"}:
         return auth
-    if not x_csrf_token or not hmac.compare_digest(x_csrf_token, auth.session.csrf_token):
+    if not x_csrf_token or not hmac.compare_digest(x_csrf_token.encode("utf-8"), auth.session.csrf_token.encode("utf-8")):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="CSRF validation failed")
     return auth
 
@@ -78,15 +79,24 @@ class RateLimiter:
         self.limit = limit
         self.window = window_seconds
         self.attempts: dict[str, deque[float]] = defaultdict(deque)
+        self._lock = Lock()
 
     def check(self, key: str) -> None:
-        now = time.monotonic()
-        bucket = self.attempts[key]
-        while bucket and now - bucket[0] > self.window:
-            bucket.popleft()
-        if len(bucket) >= self.limit:
-            raise HTTPException(status_code=429, detail="Too many attempts; try again later")
-        bucket.append(now)
+        with self._lock:
+            now = time.monotonic()
+            if key not in self.attempts and len(self.attempts) >= 4096:
+                self.attempts = defaultdict(deque, {
+                    address: times for address, times in self.attempts.items()
+                    if times and now - times[-1] <= self.window
+                })
+                if len(self.attempts) >= 4096:
+                    raise HTTPException(status_code=429, detail="Too many attempts; try again later")
+            bucket = self.attempts[key]
+            while bucket and now - bucket[0] > self.window:
+                bucket.popleft()
+            if len(bucket) >= self.limit:
+                raise HTTPException(status_code=429, detail="Too many attempts; try again later")
+            bucket.append(now)
 
 
 login_limiter = RateLimiter(8, 60)

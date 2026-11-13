@@ -6,8 +6,12 @@ from ..config import load_settings
 from ..renderer.factory import available_backends
 from ..renderer.rpc import RendererRPCError
 from ..schemas import FocusRequest, RendererConfigRequest
-from ..services.renderer_config import renderer_config, request_renderer_restart, select_renderer_backend
-from .dependencies import Auth, CSRF
+from ..services.renderer_config import (
+    renderer_config,
+    request_renderer_restart,
+    select_renderer_backend,
+)
+from .dependencies import CSRF, Auth
 
 router = APIRouter(prefix="/renderer", tags=["renderer"])
 

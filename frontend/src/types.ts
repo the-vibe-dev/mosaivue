@@ -121,6 +121,19 @@ export type DisplayProfile = {
   updated_at: string;
 };
 
+export type Schedule = {
+  id: string;
+  name: string;
+  enabled: boolean;
+  layout_id: string;
+  days: number[];
+  start_time: string;
+  end_time: string;
+  priority: number;
+  created_at: string;
+  updated_at: string;
+};
+
 export type StreamHealth = {
   slot_id: string;
   camera_id: string;

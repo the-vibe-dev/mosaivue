@@ -7,7 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from ..models import DisplayProfile
 from ..schemas import DisplayProfileIn, DisplayProfileOut
 from ..services.capabilities import detect_drm_outputs
-from .dependencies import Auth, CSRF, DB
+from .dependencies import CSRF, DB, Auth
 
 router = APIRouter(prefix="/display", tags=["display"])
 
@@ -36,6 +36,7 @@ async def create_profile(
     except IntegrityError as exc:
         raise HTTPException(status_code=409, detail="A display profile with this name already exists") from exc
     result = DisplayProfileOut.model_validate(profile)
+    db.commit()
     await request.app.state.events.publish("display.changed", result.model_dump(mode="json"))
     return result
 
@@ -49,7 +50,12 @@ async def update_profile(
         raise HTTPException(status_code=404, detail="Display profile not found")
     for key, value in payload.model_dump().items():
         setattr(profile, key, value)
+    try:
+        db.flush()
+    except IntegrityError as exc:
+        raise HTTPException(status_code=409, detail="A display profile with this name already exists") from exc
     result = DisplayProfileOut.model_validate(profile)
+    db.commit()
     await request.app.state.events.publish("display.changed", result.model_dump(mode="json"))
     return result
 
@@ -60,4 +66,5 @@ def delete_profile(profile_id: str, db: DB, _: CSRF) -> Response:
     if profile is None:
         raise HTTPException(status_code=404, detail="Display profile not found")
     db.delete(profile)
+    db.commit()
     return Response(status_code=204)

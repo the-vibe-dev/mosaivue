@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
@@ -16,7 +15,7 @@ from ..services.benchmark import BenchmarkUnavailable, synthetic_benchmark
 from ..services.capabilities import detect_capabilities, live_metrics, write_capabilities
 from ..services.diagnostics import build_support_bundle, security_audit
 from ..services.layouts import LayoutService
-from .dependencies import Auth, CSRF, DB
+from .dependencies import CSRF, DB, Auth
 
 router = APIRouter(prefix="/system", tags=["system"])
 
@@ -100,7 +99,6 @@ async def benchmark(
 @router.get("/optimize")
 def optimize(_: Auth) -> dict[str, object]:
     capabilities = detect_capabilities()
-    plugins = capabilities.get("gstreamer", {}).get("plugins", {})
     sink = capabilities.get("recommended_sink")
     decoders = capabilities.get("gstreamer", {}).get("decoders", [])
     return {

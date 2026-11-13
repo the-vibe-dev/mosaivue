@@ -6,7 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from ..renderer.rpc import RendererRPCError
 from ..schemas import RotationGroupIn, RotationGroupOut
 from ..services.rotations import RotationService
-from .dependencies import Auth, CSRF, DB
+from .dependencies import CSRF, DB, Auth
 
 router = APIRouter(prefix="/rotation-groups", tags=["rotation groups"])
 
@@ -25,6 +25,7 @@ async def create_group(payload: RotationGroupIn, request: Request, db: DB, _: CS
     except IntegrityError as exc:
         raise HTTPException(status_code=409, detail="A rotation group with this name already exists") from exc
     result = RotationGroupOut.model_validate(group)
+    db.commit()
     await request.app.state.events.publish("rotation.changed", result.model_dump(mode="json"))
     return result
 
@@ -47,7 +48,10 @@ async def update_group(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except IntegrityError as exc:
+        raise HTTPException(status_code=409, detail="A rotation group with this name already exists") from exc
     result = RotationGroupOut.model_validate(group)
+    db.commit()
     await request.app.state.events.publish("rotation.changed", result.model_dump(mode="json"))
     return result
 
@@ -58,6 +62,9 @@ async def delete_group(group_id: str, request: Request, db: DB, _: CSRF) -> Resp
         RotationService(db).delete(group_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    db.commit()
     await request.app.state.events.publish("rotation.deleted", {"id": group_id})
     return Response(status_code=204)
 

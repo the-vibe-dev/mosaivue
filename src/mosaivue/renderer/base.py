@@ -87,9 +87,11 @@ class RendererCapabilities:
 class RendererBackend(ABC):
     def start_playback(self) -> None:
         """Start output after the initial layout has linked its streams."""
+        return None
 
     def prepare_stream(self, slot_id: str, spec: StreamSpec) -> None:
         """Optionally prepare a replacement while the current stream remains visible."""
+        return None
 
     def activate_prepared_stream(self, slot_id: str, spec: StreamSpec) -> None:
         """Use a prepared source when supported, otherwise replace the stream."""
@@ -97,6 +99,7 @@ class RendererBackend(ABC):
 
     def cancel_prepared(self, slot_id: str) -> None:
         """Discard a prepared replacement for a slot."""
+        return None
 
     @abstractmethod
     def initialize(self, *, width: int, height: int, sink: str = "auto") -> None: ...

@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
-from typing import AsyncIterator
 
 import uvicorn
-from fastapi import APIRouter, Depends, FastAPI, Request
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, select
@@ -21,6 +21,7 @@ from ..models import User
 from ..renderer.rpc import RendererRPCClient
 from ..security import KeyManager, generate_setup_token
 from ..services.capabilities import write_capabilities
+from ..services.event_stream import authenticated_events, event_session_valid
 from ..version import __version__
 from .dependencies import AuthContext, require_auth
 from .routes_auth import router as auth_router
@@ -29,6 +30,7 @@ from .routes_cameras import router as cameras_router
 from .routes_display import router as display_router
 from .routes_layouts import router as layouts_router
 from .routes_logs import router as logs_router
+from .routes_onvif import router as onvif_router
 from .routes_renderer import router as renderer_router
 from .routes_rotations import router as rotations_router
 from .routes_schedules import router as schedules_router
@@ -103,6 +105,7 @@ def create_app() -> FastAPI:
     for router in (
         auth_router,
         cameras_router,
+        onvif_router,
         layouts_router,
         rotations_router,
         display_router,
@@ -125,16 +128,15 @@ def create_app() -> FastAPI:
         return {"status": "ok", "renderer": renderer}
 
     @api.get("/events", tags=["events"])
-    async def events(
-        request: Request, _: AuthContext = Depends(require_auth)
-    ) -> StreamingResponse:
-        async def stream() -> AsyncIterator[str]:
-            async for message in request.app.state.events.subscribe():
-                if await request.is_disconnected():
-                    break
-                yield EventBus.encode_sse(message)
-
-        return StreamingResponse(stream(), media_type="text/event-stream")
+    async def events(request: Request) -> StreamingResponse:
+        token = request.cookies.get("mosaivue_session")
+        if not token or not await asyncio.to_thread(event_session_valid, token):
+            raise HTTPException(status_code=401, detail="Session expired or invalid")
+        return StreamingResponse(
+            authenticated_events(request.app.state.events, token, request.is_disconnected),
+            media_type="text/event-stream",
+            headers={"X-Accel-Buffering": "no", "Cache-Control": "no-store"},
+        )
 
     app.include_router(api)
 

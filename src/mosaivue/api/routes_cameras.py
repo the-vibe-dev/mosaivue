@@ -3,13 +3,15 @@ from __future__ import annotations
 import asyncio
 from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Query, Request, Response, status
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 from sqlalchemy.exc import IntegrityError
 
+from ..config import load_settings
+from ..logging_utils import redact
 from ..schemas import CameraCreate, CameraOut, CameraUpdate
 from ..services.cameras import CameraService
 from ..services.stream_probe import StreamProbeUnavailable, capture_thumbnail, probe_stream
-from .dependencies import Auth, CSRF, DB, get_cipher
+from .dependencies import CSRF, DB, Auth, get_cipher
 
 router = APIRouter(prefix="/cameras", tags=["cameras"])
 
@@ -37,7 +39,10 @@ async def create_camera(payload: CameraCreate, request: Request, db: DB, _: CSRF
         db.flush()
     except IntegrityError as exc:
         raise HTTPException(status_code=409, detail="A camera with this name already exists") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     result = service.output(camera)
+    db.commit()
     await request.app.state.events.publish("camera.changed", result.model_dump(mode="json"))
     return result
 
@@ -63,7 +68,10 @@ async def update_camera(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except IntegrityError as exc:
         raise HTTPException(status_code=409, detail="A camera with this name already exists") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     result = service.output(camera)
+    db.commit()
     await request.app.state.events.publish("camera.changed", result.model_dump(mode="json"))
     return result
 
@@ -74,6 +82,9 @@ async def delete_camera(camera_id: str, request: Request, db: DB, _: CSRF) -> Re
         _service(db).delete(camera_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    db.commit()
     await request.app.state.events.publish("camera.deleted", {"id": camera_id})
     return Response(status_code=204)
 
@@ -86,6 +97,7 @@ async def duplicate_camera(camera_id: str, request: Request, db: DB, _: CSRF) ->
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     result = service.output(camera)
+    db.commit()
     await request.app.state.events.publish("camera.changed", result.model_dump(mode="json"))
     return result
 
@@ -100,7 +112,7 @@ async def test_camera(
     service = _service(db)
     try:
         _, profile, url = service.resolve_stream_url(camera_id, stream_profile_id)
-        result = await asyncio.to_thread(probe_stream, url)
+        result = await asyncio.to_thread(probe_stream, url, transport=profile.transport)
         result["profile_id"] = profile.id
         return result
     except KeyError as exc:
@@ -108,7 +120,7 @@ async def test_camera(
     except StreamProbeUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
-        return {"success": False, "error": str(exc)}
+        return {"success": False, "error": str(redact(str(exc)))}
 
 
 @router.get("/{camera_id}/preview")
@@ -119,10 +131,12 @@ async def camera_preview(
     stream_profile_id: str | None = None,
     width: Annotated[int, Query(ge=160, le=1920)] = 640,
 ) -> Response:
+    if not load_settings().web_preview_enabled:
+        raise HTTPException(status_code=403, detail="Web camera previews are disabled on this appliance")
     service = _service(db)
     try:
-        _, _, url = service.resolve_stream_url(camera_id, stream_profile_id)
-        image = await asyncio.to_thread(capture_thumbnail, url, width=width)
+        _, profile, url = service.resolve_stream_url(camera_id, stream_profile_id)
+        image = await asyncio.to_thread(capture_thumbnail, url, width=width, transport=profile.transport)
         return Response(content=image, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import uuid
+from contextlib import suppress
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from sqlalchemy import select
@@ -10,7 +10,7 @@ from ..models import Layout
 from ..renderer.rpc import RendererRPCError
 from ..schemas import LayoutCreate, LayoutData, LayoutOut, LayoutRevisionOut, LayoutUpdate
 from ..services.layouts import LayoutService, LayoutValidationError
-from .dependencies import Auth, CSRF, DB
+from .dependencies import CSRF, DB, Auth
 
 router = APIRouter(prefix="/layouts", tags=["layouts"])
 
@@ -31,6 +31,7 @@ async def create_layout(payload: LayoutCreate, request: Request, db: DB, auth: C
     except IntegrityError as exc:
         raise HTTPException(status_code=409, detail="A layout with this name already exists") from exc
     result = service.output(layout)
+    db.commit()
     await request.app.state.events.publish("layout.changed", result.model_dump(mode="json"))
     return result
 
@@ -93,6 +94,7 @@ async def update_layout(
     except IntegrityError as exc:
         raise HTTPException(status_code=409, detail="A layout with this name already exists") from exc
     result = service.output(layout)
+    db.commit()
     await request.app.state.events.publish("layout.changed", result.model_dump(mode="json"))
     return result
 
@@ -105,6 +107,7 @@ async def delete_layout(layout_id: str, request: Request, db: DB, _: CSRF) -> Re
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    db.commit()
     await request.app.state.events.publish("layout.deleted", {"id": layout_id})
     return Response(status_code=204)
 
@@ -126,7 +129,10 @@ async def restore_revision(
         layout = service.restore_revision(layout_id, revision, user_id=auth.user.id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except LayoutValidationError as exc:
+        raise HTTPException(status_code=422, detail={"errors": exc.errors, "warnings": exc.warnings}) from exc
     result = service.output(layout)
+    db.commit()
     await request.app.state.events.publish("layout.changed", result.model_dump(mode="json"))
     return result
 
@@ -155,14 +161,13 @@ async def activate_layout(layout_id: str, request: Request, db: DB, _: CSRF) -> 
         )
     except RendererRPCError as exc:
         if previous and previous.id != layout.id:
-            try:
+            with suppress(RendererRPCError):
                 await request.app.state.renderer.call(
                     "apply_layout", layout_id=previous.id, revision=previous.current_revision
                 )
-            except RendererRPCError:
-                pass
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     service.activate(layout_id)
+    db.commit()
     await request.app.state.events.publish(
         "layout.activated", {"id": layout.id, "revision": layout.current_revision}
     )

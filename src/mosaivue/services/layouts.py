@@ -3,11 +3,11 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
 from ..constants import MAX_LAYOUT_REVISIONS
-from ..models import Camera, Layout, LayoutRevision, RotationGroup
+from ..models import Camera, DisplayProfile, Layout, LayoutRevision, RotationGroup, StreamProfile
 from ..schemas import LayoutCreate, LayoutData, LayoutOut, LayoutRevisionOut, LayoutUpdate
 
 LOGGER = logging.getLogger(__name__)
@@ -42,6 +42,7 @@ class LayoutService:
         )
 
     def create(self, payload: LayoutCreate, user_id: str | None = None) -> Layout:
+        self._validate_display_profile(payload.display_profile_id)
         errors, warnings = self.validate(payload.data)
         if errors:
             raise LayoutValidationError(errors, warnings)
@@ -68,6 +69,8 @@ class LayoutService:
 
     def update(self, layout_id: str, payload: LayoutUpdate, user_id: str | None = None) -> Layout:
         layout = self.get(layout_id)
+        if "display_profile_id" in payload.model_fields_set:
+            self._validate_display_profile(payload.display_profile_id)
         if payload.name is not None:
             layout.name = payload.name
         if payload.description is not None:
@@ -94,7 +97,7 @@ class LayoutService:
         return layout
 
     def restore_revision(self, layout_id: str, revision_number: int, user_id: str | None = None) -> Layout:
-        layout = self.get(layout_id)
+        self.get(layout_id)
         source = self.db.scalar(
             select(LayoutRevision).where(
                 LayoutRevision.layout_id == layout_id,
@@ -160,11 +163,17 @@ class LayoutService:
         warnings: list[str] = []
         camera_ids = set(self.db.scalars(select(Camera.id)))
         rotation_ids = set(self.db.scalars(select(RotationGroup.id)))
+        profile_owners = dict(self.db.execute(select(StreamProfile.id, StreamProfile.camera_id)).all())
+        disabled_ids = set(self.db.scalars(select(Camera.id).where(Camera.enabled.is_(False))))
         for slot in data.slots:
             if slot.type.value in {"fixed", "manual"}:
-                camera_id = slot.camera_id or slot.selected_camera_id
+                camera_id = (slot.selected_camera_id or slot.camera_id) if slot.type.value == "manual" else slot.camera_id
                 if camera_id not in camera_ids:
                     errors.append(f"Slot {slot.name} references missing camera {camera_id}")
+                elif camera_id in disabled_ids:
+                    warnings.append(f"Slot {slot.name} uses a disabled camera")
+                if slot.stream_profile_id is not None and profile_owners.get(slot.stream_profile_id) != camera_id:
+                    errors.append(f"Slot {slot.name} references a stream profile that does not belong to its camera")
             if slot.type.value == "rotation" and slot.rotation_group_id not in rotation_ids:
                 errors.append(f"Slot {slot.name} references missing rotation group {slot.rotation_group_id}")
         for index, first in enumerate(data.slots):
@@ -174,6 +183,10 @@ class LayoutService:
                 if _overlaps(first.model_dump(), second.model_dump()):
                     warnings.append(f"Slots {first.name} and {second.name} overlap at the same z-index")
         return errors, warnings
+
+    def _validate_display_profile(self, profile_id: str | None) -> None:
+        if profile_id is not None and self.db.get(DisplayProfile, profile_id) is None:
+            raise LayoutValidationError(["Display profile not found"])
 
     def _prune(self, layout_id: str) -> None:
         revisions = list(

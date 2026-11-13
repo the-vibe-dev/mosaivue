@@ -2,11 +2,47 @@
 
 All notable changes follow a Keep a Changelog-style format. Version numbers use semantic versioning after the first stable release.
 
-## Unreleased
+## [0.1.0b3] - 2026-11-13 — review candidate
+
+This is a locally delivered review candidate. It has not been published automatically or qualified as a new hardware release. No database schema migration was added by this review. Python/source version is `0.1.0b3`; Debian prerelease version is `0.1.0~b3`.
+
+### Added
+
+- Known-endpoint ONVIF Media1 profile inspection/import with administrator authentication, bounded SOAP exchanges and credential-safe profile metadata. WS-Discovery, Media2 and PTZ are outside this implementation.
+- Browser schedules management, camera/layout duplication and filtering, and uniform 2×2, 3×3 and 4×4 starting grids.
+- `MOSAIVUE_OUTPUT_FPS` for GStreamer compositor output: integer 1–60, with the existing 5 FPS default retained. This does not change camera capture FPS or monitor refresh.
+- Review report, competitor/gap analysis, regression evidence and candidate upgrade guidance in `docs/review/`.
 
 ### Fixed
 
-- A rotating GStreamer tile with blocked RTSP branch teardown now continues recovery despite sporadic decoded frames and recycles its renderer after two minutes of blockage if the tile remains STALLED. This prevents a recent frame timestamp from postponing the recovery indefinitely.
+- Camera edits with no saved credentials no longer create an encrypted empty password; the API reports a username-only camera as having no password.
+- Sanitized configuration merges retain local camera credentials; restoration remaps selected stream-profile references, preserves the exported current revision, avoids revision uniqueness collisions and retains a single active wall.
+- Nested import validation and SQLite transaction handling reject invalid graphs and roll back failed imports. API restore separates saved configuration from successful renderer application; CLI restore/import prints the required reapply instruction.
+- Camera/profile edits preserve stable identities and metadata. Referenced cameras/profiles/groups cannot be removed from current configurations without resolving their references.
+- Manual-slot/profile/display validation, pixel-override validation and output clipping, IPv6 credential round trips and malformed stream URL handling.
+- Password changes revoke other sessions; simultaneous setup creates one initial administrator; concurrent key initialization publishes one complete key. SSE revalidates sessions and mutations publish events after database commit.
+- Duplicate-name updates return conflicts, preview-disable settings take effect, and stream tests honor configured transport and require successful discovery with usable video.
+- Discovery time is no longer reported as decoded first-frame time. Unmeasured first-frame/decoder fields remain unavailable rather than implying a measurement.
+- Independent rotation-slot cursors, selected entry profiles, disabled source/group handling and distinct Skip/Hold retry behavior. Failed synchronous layout/focus changes preserve previous controller state where recoverable.
+- Overnight schedule starting-day/end-boundary behavior and reapplication of an active scheduled wall after a manual change. Focus pauses schedule application; expiry does not select an automatic fallback wall.
+- GStreamer source-failure attribution by element ownership, OMXPlayer transport/control contracts, and renderer RPC framing/error/shutdown handling.
+- Form validation/cancel paths, profile-edit data preservation, dirty-layout handling and persistent restore-result warnings in the browser interface.
+- A rotating GStreamer tile with blocked RTSP branch teardown continues recovery despite sporadic decoded frames and can recycle its renderer after two minutes of blockage while STALLED.
+
+### Security and installation
+
+- Protect `/etc/mosaivue` as root-owned `0750`; keep root-consumed metadata non-writable by the service account. The setup token alone is group-writable for consumption without directory writes.
+- Validate root-consumed metadata, dedicated install/removal prefixes and link entries before privileged writes; retain previous release/state for the installer's failure-recovery path.
+- Bound backup reads and expanded configuration size. Safe restore/import validation errors omit sensitive inputs; unexpected exceptions do not echo SQL parameters.
+- Redact URL userinfo and named sensitive query parameters from diagnostics. Full-URI encryption for opaque vendor bearer tokens remains outstanding.
+- Correct Debian prerelease ordering and checksum filenames; retain source/wheel version compatibility.
+
+### Qualification and known boundaries
+
+- The [validation record](docs/review/validation.md) distinguishes completed software checks from browser, systemd installer and physical camera/display trials still required.
+- Existing site hardware evidence applies to earlier builds and does not automatically qualify this candidate.
+- Group-level `placeholder` failure policy and synchronized rotation remain unimplemented; legacy placeholder settings behave as Hold.
+- Configuration backups exclude appliance settings, custom trust files, web accounts/sessions and OS/service provisioning. Reapply active layouts after camera/group edits and CLI configuration import/restore.
 
 ## [0.1.0b2] - 2026-11-02
 

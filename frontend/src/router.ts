@@ -2,6 +2,14 @@ export type RouteHandler = (params: Record<string, string>) => void | Promise<vo
 
 type Route = { pattern: RegExp; keys: string[]; handler: RouteHandler };
 const routes: Route[] = [];
+let navigationGuard: (() => boolean) | null = null;
+let currentPath = location.pathname;
+let currentIndex = Number(history.state?.mosaivueIndex ?? 0);
+let restoringHistory = false;
+
+export function setNavigationGuard(guard: (() => boolean) | null): void {
+  navigationGuard = guard;
+}
 
 export function route(pattern: string, handler: RouteHandler): void {
   const keys: string[] = [];
@@ -34,12 +42,29 @@ export async function resolve(path = location.pathname): Promise<void> {
 
 export function navigate(path: string): void {
   if (path === location.pathname) return;
-  history.pushState({}, '', path);
+  if (navigationGuard && !navigationGuard()) return;
+  currentIndex += 1;
+  currentPath = path;
+  history.pushState({ mosaivueIndex: currentIndex }, '', path);
   void resolve(path);
 }
 
 export function startRouter(): void {
-  window.addEventListener('popstate', () => void resolve());
+  history.replaceState({ ...history.state, mosaivueIndex: currentIndex }, '', location.href);
+  window.addEventListener('popstate', () => {
+    if (restoringHistory) { restoringHistory = false; return; }
+    const nextIndex = Number(history.state?.mosaivueIndex);
+    if (navigationGuard && !navigationGuard()) {
+      if (Number.isFinite(nextIndex) && nextIndex !== currentIndex) {
+        restoringHistory = true;
+        history.go(currentIndex - nextIndex);
+      } else history.pushState({ mosaivueIndex: currentIndex }, '', currentPath);
+      return;
+    }
+    currentIndex = Number.isFinite(nextIndex) ? nextIndex : currentIndex;
+    currentPath = location.pathname;
+    void resolve();
+  });
   document.addEventListener('click', (event) => {
     const anchor = (event.target as HTMLElement).closest<HTMLAnchorElement>('a[data-route]');
     if (!anchor || anchor.target || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Any
-
 from .db import get_session_factory
 from .renderer.rpc import RendererRPCClient, RendererRPCError
 from .security import CredentialCipher, KeyManager
@@ -24,8 +22,6 @@ def run_tui() -> None:
             Header,
             Input,
             Label,
-            OptionList,
-            Select,
             Static,
             TabbedContent,
             TabPane,

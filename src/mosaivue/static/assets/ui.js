@@ -84,27 +84,31 @@ export function openDialog(options) {
     dialog.className = `modal ${options.wide ? 'modal-wide' : ''}`;
     dialog.innerHTML = `
     <form method="dialog" class="modal-shell">
-      <header class="modal-header"><h2>${escapeHtml(options.title)}</h2><button class="icon-button" value="cancel" aria-label="Close">${icon('close')}</button></header>
+      <header class="modal-header"><h2>${escapeHtml(options.title)}</h2><button type="button" class="icon-button" data-dialog-cancel aria-label="Close">${icon('close')}</button></header>
       <div class="modal-body">${options.body}</div>
       <footer class="modal-footer">
-        <button class="button button-ghost" value="cancel">Cancel</button>
-        ${options.onSubmit ? `<button class="button ${options.destructive ? 'button-danger' : 'button-primary'}" value="submit">${escapeHtml(options.submitLabel ?? 'Save')}</button>` : ''}
+        <button type="button" class="button button-ghost" data-dialog-cancel>Cancel</button>
+        ${options.onSubmit ? `<button type="submit" class="button ${options.destructive ? 'button-danger' : 'button-primary'}" value="submit">${escapeHtml(options.submitLabel ?? 'Save')}</button>` : ''}
       </footer>
     </form>`;
     document.body.append(dialog);
+    dialog.querySelectorAll('[data-dialog-cancel]').forEach((button) => button.addEventListener('click', () => dialog.close('cancel')));
     dialog.addEventListener('close', () => dialog.remove());
     const form = dialog.querySelector('form');
     form.addEventListener('submit', async (event) => {
-        const submitter = event.submitter;
-        if (submitter?.value !== 'submit' || !options.onSubmit)
-            return;
+        const submitter = (event.submitter ?? form.querySelector('button[type="submit"]'));
         event.preventDefault();
+        if (!submitter || !options.onSubmit)
+            return;
         submitter.disabled = true;
         submitter.classList.add('is-loading');
         try {
             const shouldClose = await options.onSubmit(dialog);
             if (shouldClose !== false)
                 dialog.close('submit');
+        }
+        catch (error) {
+            toast(error instanceof Error ? error.message : 'Unable to save changes', 'error');
         }
         finally {
             submitter.disabled = false;

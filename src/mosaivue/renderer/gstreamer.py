@@ -80,6 +80,16 @@ def _normalized_rotation_caps(width: int, height: int) -> str:
     )
 
 
+def _output_frame_rate(value: str | None) -> int:
+    try:
+        rate = int(value) if value is not None else 5
+    except ValueError as exc:
+        raise ValueError("MOSAIVUE_OUTPUT_FPS must be an integer from 1 to 60") from exc
+    if not 1 <= rate <= 60:
+        raise ValueError("MOSAIVUE_OUTPUT_FPS must be an integer from 1 to 60")
+    return rate
+
+
 @dataclass
 class _SlotRuntime:
     spec: StreamSpec
@@ -151,6 +161,7 @@ class GStreamerRenderer(RendererBackend):
         self._health: dict[str, StreamHealth] = {}
         self._output_width = 1920
         self._output_height = 1080
+        self._output_fps = _output_frame_rate(os.environ.get("MOSAIVUE_OUTPUT_FPS"))
         self._sink_name = "auto"
         self._started_at: float | None = None
         self._bus_watch_id: int | None = None
@@ -282,7 +293,7 @@ class GStreamerRenderer(RendererBackend):
         output_caps.set_property(
             "caps",
             Gst.Caps.from_string(
-                f"video/x-raw,width={self._output_width},height={self._output_height},framerate=5/1,pixel-aspect-ratio=1/1"
+                f"video/x-raw,width={self._output_width},height={self._output_height},framerate={self._output_fps}/1,pixel-aspect-ratio=1/1"
             ),
         )
         for element in (compositor, convert, output_scale, output_caps, sink):
@@ -353,7 +364,7 @@ class GStreamerRenderer(RendererBackend):
             self._output_caps.set_property(
                 "caps",
                 self.Gst.Caps.from_string(
-                    f"video/x-raw,width={width},height={height},framerate=5/1,pixel-aspect-ratio=1/1"
+                    f"video/x-raw,width={width},height={height},framerate={self._output_fps}/1,pixel-aspect-ratio=1/1"
                 ),
             )
 
@@ -1100,7 +1111,7 @@ class GStreamerRenderer(RendererBackend):
             },
             "state": "RUNNING" if self._playing else "READY" if self._pipeline is not None else "STOPPED",
             "sink": self._sink.get_factory().get_name() if self._sink else None,
-            "output": {"width": self._output_width, "height": self._output_height},
+            "output": {"width": self._output_width, "height": self._output_height, "fps": self._output_fps},
             "uptime_seconds": time.monotonic() - self._started_at if self._started_at else 0,
             "streams": {key: value.to_dict() for key, value in self._health.items()},
         }
@@ -1649,18 +1660,33 @@ class GStreamerRenderer(RendererBackend):
         return False
 
     def _slot_for_element(self, element: Any) -> str | None:
+        # Element names include user-provided slot IDs. Substring matching
+        # confuses e.g. "front" and "front-door", restarting the wrong tile.
+        # Follow the actual element ancestry to one of the slot's owned nodes.
+        owned: list[tuple[str, tuple[Any, ...]]] = []
+        for slot_id, runtime in self._slots.items():
+            nodes = tuple(
+                getattr(runtime, attribute, None)
+                for attribute in (
+                    "selector", "placeholder_source", "placeholder_caps", "placeholder_text",
+                    "queue", "convert", "cropper", "scale", "capsfilter", "title_overlay",
+                    "source", "source_queue",
+                )
+            )
+            prepared = getattr(runtime, "prepared", None)
+            if prepared:
+                nodes += (prepared.source, prepared.queue)
+            nodes += (*getattr(runtime, "retired_sources", ()), *getattr(runtime, "retired_queues", ()))
+            owned.append((slot_id, tuple(node for node in nodes if node is not None)))
         current = element
-        names: list[str] = []
         while current is not None:
+            for slot_id, nodes in owned:
+                if any(current == node for node in nodes):
+                    return slot_id
             try:
-                names.append(current.get_name())
                 current = current.get_parent()
             except Exception:
                 break
-        joined = " ".join(names)
-        for slot_id in self._slots:
-            if slot_id in joined:
-                return slot_id
         return None
 
     def shutdown(self) -> None:

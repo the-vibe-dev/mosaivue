@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from importlib import import_module
 from pathlib import Path
-import threading
-import time
 
 from fastapi.testclient import TestClient
 

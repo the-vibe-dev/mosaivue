@@ -29,20 +29,28 @@ def _load_gst() -> tuple[Any, Any, Any]:
         ) from exc
 
 
-def probe_stream(url: str, timeout_seconds: int = 10) -> dict[str, Any]:
+def _configure_rtsp_transport(source: Any, transport: str) -> None:
+    if transport in {"tcp", "udp"} and source.find_property("protocols"):
+        source.set_property("protocols", 4 if transport == "tcp" else 1)
+
+
+def probe_stream(url: str, timeout_seconds: int = 10, *, transport: str = "auto") -> dict[str, Any]:
     Gst, GstPbutils, _ = _load_gst()
     started = time.monotonic()
     discoverer = GstPbutils.Discoverer.new(timeout_seconds * Gst.SECOND)
+    discoverer.connect("source-setup", lambda _, source: _configure_rtsp_transport(source, transport))
     try:
         info = discoverer.discover_uri(url)
     except Exception as exc:
-        raise RuntimeError(f"Stream discovery failed: {exc}") from exc
+        raise RuntimeError("Stream discovery failed; check the URL, credentials, transport, and camera connectivity") from exc
     duration = (time.monotonic() - started) * 1000
     result: dict[str, Any] = {
-        "success": True,
+        "success": False,
         "response_time_ms": round(duration, 1),
-        "time_to_first_frame_ms": round(duration, 1),
-        "transport": urlsplit(url).scheme.lower(),
+        "time_to_first_frame_ms": None,
+        "timing_note": "Discovery time is not a decoded first-frame measurement",
+        "protocol": urlsplit(url).scheme.lower(),
+        "transport": transport,
         "codec": None,
         "width": None,
         "height": None,
@@ -50,6 +58,10 @@ def probe_stream(url: str, timeout_seconds: int = 10) -> dict[str, Any]:
         "bitrate": None,
         "decoder_selected": None,
     }
+    outcome = info.get_result()
+    if outcome != GstPbutils.DiscovererResult.OK:
+        result["error"] = f"Stream discovery was not successful ({getattr(outcome, 'value_nick', str(outcome))})"
+        return result
     streams = info.get_stream_list() or []
     for stream in streams:
         if isinstance(stream, GstPbutils.DiscovererVideoInfo):
@@ -68,22 +80,25 @@ def probe_stream(url: str, timeout_seconds: int = 10) -> dict[str, Any]:
                     "bitrate": stream.get_bitrate() or None,
                 }
             )
+            result["success"] = bool(result["width"] and result["height"])
             break
+    if not result["success"]:
+        result["error"] = "No usable video stream was discovered"
     return result
 
 
-def capture_thumbnail(url: str, *, width: int = 640, timeout_seconds: int = 10) -> bytes:
+def capture_thumbnail(url: str, *, width: int = 640, timeout_seconds: int = 10, transport: str = "tcp") -> bytes:
     try:
-        return _capture_thumbnail_gstreamer(url, width=width, timeout_seconds=timeout_seconds)
+        return _capture_thumbnail_gstreamer(url, width=width, timeout_seconds=timeout_seconds, transport=transport)
     except Exception as exc:
         LOGGER.warning("GStreamer thumbnail capture failed (%s); trying FFmpeg", type(exc).__name__)
-        return _capture_thumbnail_ffmpeg(url, width=width, timeout_seconds=timeout_seconds)
+        return _capture_thumbnail_ffmpeg(url, width=width, timeout_seconds=timeout_seconds, transport=transport)
 
 
-def _capture_thumbnail_ffmpeg(url: str, *, width: int, timeout_seconds: int) -> bytes:
+def _capture_thumbnail_ffmpeg(url: str, *, width: int, timeout_seconds: int, transport: str = "tcp") -> bytes:
     command = ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error"]
-    if urlsplit(url).scheme.lower() == "rtsp":
-        command.extend(["-rtsp_transport", "tcp"])
+    if urlsplit(url).scheme.lower() in {"rtsp", "rtsps"} and transport in {"tcp", "udp"}:
+        command.extend(["-rtsp_transport", transport])
     command.extend([
         "-i", url, "-an", "-frames:v", "1", "-vf", f"scale={width}:-2",
         "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1",
@@ -97,7 +112,7 @@ def _capture_thumbnail_ffmpeg(url: str, *, width: int, timeout_seconds: int) -> 
     return result.stdout
 
 
-def _capture_thumbnail_gstreamer(url: str, *, width: int, timeout_seconds: int) -> bytes:
+def _capture_thumbnail_gstreamer(url: str, *, width: int, timeout_seconds: int, transport: str = "tcp") -> bytes:
     Gst, _, GLib = _load_gst()
     pipeline = Gst.Pipeline.new("thumbnail")
     source = Gst.ElementFactory.make("uridecodebin", "source")
@@ -109,6 +124,7 @@ def _capture_thumbnail_gstreamer(url: str, *, width: int, timeout_seconds: int) 
     if not all((source, convert, scale, capsfilter, encoder, sink)):
         raise StreamProbeUnavailable("Required GStreamer thumbnail elements are unavailable")
     source.set_property("uri", url)
+    source.connect("source-setup", lambda _, element: _configure_rtsp_transport(element, transport))
     capsfilter.set_property("caps", Gst.Caps.from_string(f"video/x-raw,width={width}"))
     sink.set_property("emit-signals", True)
     sink.set_property("sync", False)

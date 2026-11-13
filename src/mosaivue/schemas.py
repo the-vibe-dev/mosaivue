@@ -3,8 +3,9 @@ from __future__ import annotations
 from datetime import datetime
 from enum import StrEnum
 from typing import Annotated, Any, Literal
+from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class Transport(StrEnum):
@@ -50,9 +51,26 @@ class StreamProfileIn(BaseModel):
     @field_validator("url")
     @classmethod
     def validate_url(cls, value: str) -> str:
-        if not value.lower().startswith(("rtsp://", "rtsps://")):
+        if any(character.isspace() or ord(character) < 32 for character in value):
+            raise ValueError("Stream URLs must not contain whitespace or control characters")
+        try:
+            parts = urlsplit(value)
+            port = parts.port
+        except ValueError as exc:
+            raise ValueError("Stream URL has an invalid host or port") from exc
+        if parts.scheme.lower() not in {"rtsp", "rtsps"}:
             raise ValueError("Only RTSP/RTSPS stream URLs are supported")
+        if not parts.hostname or (port is not None and port == 0):
+            raise ValueError("Stream URL requires a host and a valid port")
         return value
+
+
+def _unique_profiles(value: list[StreamProfileIn]) -> list[StreamProfileIn]:
+    names = [profile.name for profile in value]
+    ids = [profile.id for profile in value if profile.id is not None]
+    if len(names) != len(set(names)) or len(ids) != len(set(ids)):
+        raise ValueError("Stream profile names and IDs must be unique within a camera")
+    return value
 
 
 class CameraCreate(BaseModel):
@@ -68,6 +86,8 @@ class CameraCreate(BaseModel):
     password: str | None = Field(default=None, max_length=2048)
     stream_profiles: list[StreamProfileIn] = Field(min_length=1)
 
+    _validate_profiles = field_validator("stream_profiles")(_unique_profiles)
+
     @field_validator("tags")
     @classmethod
     def normalize_tags(cls, value: list[str]) -> list[str]:
@@ -81,12 +101,24 @@ class CameraUpdate(BaseModel):
     vendor: str | None = Field(default=None, max_length=100)
     model: str | None = Field(default=None, max_length=255)
     host: str | None = Field(default=None, max_length=255)
-    tags: list[str] | None = None
+    tags: list[str] | None = Field(default=None, max_length=64)
     location: str | None = Field(default=None, max_length=255)
     username: str | None = Field(default=None, max_length=255)
     password: str | None = Field(default=None, max_length=2048)
     clear_credentials: bool = False
-    stream_profiles: list[StreamProfileIn] | None = None
+    stream_profiles: list[StreamProfileIn] | None = Field(default=None, min_length=1)
+
+    @field_validator("stream_profiles")
+    @classmethod
+    def unique_profiles(cls, value: list[StreamProfileIn] | None) -> list[StreamProfileIn] | None:
+        return _unique_profiles(value) if value is not None else None
+
+    @model_validator(mode="after")
+    def nonnullable_fields(self) -> CameraUpdate:
+        for field in ("name", "description", "enabled", "vendor", "tags"):
+            if field in self.model_fields_set and getattr(self, field) is None:
+                raise ValueError(f"{field} cannot be null")
+        return self
 
     @field_validator("tags")
     @classmethod
@@ -141,14 +173,14 @@ class Crop(BaseModel):
     left: Normalized = 0.0
 
     @model_validator(mode="after")
-    def check_crop(self) -> "Crop":
+    def check_crop(self) -> Crop:
         if self.left + self.right >= 1 or self.top + self.bottom >= 1:
             raise ValueError("Crop values must leave a visible area")
         return self
 
 
 class Slot(BaseModel):
-    id: str
+    id: str = Field(min_length=1, max_length=128)
     name: str = Field(min_length=1, max_length=255)
     type: SlotType = SlotType.fixed
     x: Normalized
@@ -174,8 +206,21 @@ class Slot(BaseModel):
     opacity: float = Field(default=1.0, ge=0.0, le=1.0)
     pixel_override: dict[str, int] | None = None
 
+    @field_validator("pixel_override")
+    @classmethod
+    def valid_pixel_override(cls, value: dict[str, int] | None) -> dict[str, int] | None:
+        if value is None:
+            return None
+        if set(value) != {"x", "y", "width", "height"}:
+            raise ValueError("Pixel overrides require exactly x, y, width, and height")
+        if value["x"] < 0 or value["y"] < 0 or value["width"] < 1 or value["height"] < 1:
+            raise ValueError("Pixel override positions must be nonnegative and dimensions positive")
+        if value["x"] + value["width"] > 16384 or value["y"] + value["height"] > 16384:
+            raise ValueError("Pixel override extends beyond the maximum supported display size")
+        return value
+
     @model_validator(mode="after")
-    def validate_geometry_and_source(self) -> "Slot":
+    def validate_geometry_and_source(self) -> Slot:
         if self.x + self.width > 1.000001 or self.y + self.height > 1.000001:
             raise ValueError("Slot geometry extends beyond the display")
         if self.type == SlotType.fixed and not self.camera_id:
@@ -188,7 +233,7 @@ class Slot(BaseModel):
 
 
 class LayoutData(BaseModel):
-    schema_version: int = 1
+    schema_version: Literal[1] = 1
     slots: list[Slot] = Field(default_factory=list, max_length=128)
     background: str = "#05080c"
     output_width: int | None = Field(default=None, ge=320, le=16384)
@@ -203,6 +248,18 @@ class LayoutData(BaseModel):
         if len(ids) != len(set(ids)):
             raise ValueError("Slot IDs must be unique")
         return value
+
+    @model_validator(mode="after")
+    def pixel_overrides_fit_output(self) -> LayoutData:
+        for slot in self.slots:
+            override = slot.pixel_override
+            if override is None:
+                continue
+            if self.output_width is not None and override["x"] + override["width"] > self.output_width:
+                raise ValueError("Pixel override extends beyond the configured output width")
+            if self.output_height is not None and override["y"] + override["height"] > self.output_height:
+                raise ValueError("Pixel override extends beyond the configured output height")
+        return self
 
 
 class LayoutCreate(BaseModel):
@@ -318,12 +375,12 @@ class RendererConfigRequest(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    username: str
-    password: str
+    username: str = Field(min_length=1, max_length=255)
+    password: str = Field(max_length=1024)
 
 
 class PasswordChangeRequest(BaseModel):
-    current_password: str
+    current_password: str = Field(max_length=1024)
     new_password: str = Field(min_length=12, max_length=1024)
 
 
@@ -332,7 +389,7 @@ class BackupRequest(BaseModel):
     passphrase: str | None = Field(default=None, min_length=12, max_length=1024)
 
     @model_validator(mode="after")
-    def require_passphrase(self) -> "BackupRequest":
+    def require_passphrase(self) -> BackupRequest:
         if self.include_credentials and not self.passphrase:
             raise ValueError("A passphrase is required when including credentials")
         return self

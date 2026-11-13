@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mosaivue"
-version = "0.1.0b2"
+version = "0.1.0b3"
 description = "Local-first camera wall appliance for Raspberry Pi and Linux"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -31,6 +31,7 @@ dependencies = [
   "psutil>=6,<8",
   "python-multipart>=0.0.12,<1",
   "httpx>=0.27,<1",
+  "defusedxml>=0.7.1,<1",
   "rich>=13.9,<15",
   "textual>=1.0,<4",
   "PyYAML>=6,<7",
@@ -67,6 +68,7 @@ addopts = "-ra --strict-markers"
 testpaths = ["tests"]
 pythonpath = ["src"]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 
 [tool.ruff]
 target-version = "py311"
@@ -76,6 +78,14 @@ exclude = ["frontend/dist"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
 ignore = ["E501"]
+
+[tool.ruff.lint.flake8-bugbear]
+# Framework metadata factories are intentionally evaluated when commands/routes are defined.
+extend-immutable-calls = ["fastapi.Depends", "typer.Option"]
+
+[tool.ruff.lint.per-file-ignores]
+# Test paths must be isolated before importing environment-derived application constants.
+"tests/conftest.py" = ["E402"]
 
 [tool.mypy]
 python_version = "3.11"

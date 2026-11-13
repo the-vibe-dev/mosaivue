@@ -90,15 +90,13 @@ async def run_daemon() -> None:
             loop.add_signal_handler(sig, stop_event.set)
 
     async def schedule_watcher() -> None:
-        last_layout = controller.active_layout_id
         while not stop_event.is_set():
             if settings.schedule_enabled and not controller.focused:
                 with session_factory() as db:
                     scheduled = select_scheduled_layout(db, datetime.now().astimezone())
-                if scheduled and scheduled != last_layout:
+                if scheduled and scheduled != controller.active_layout_id:
                     try:
                         await controller.apply_layout(scheduled)
-                        last_layout = scheduled
                     except Exception:
                         LOGGER.exception("Unable to apply scheduled layout")
             with suppress(TimeoutError):

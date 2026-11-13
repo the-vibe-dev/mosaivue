@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import re
 import subprocess
 from datetime import datetime
@@ -42,10 +43,8 @@ def logs(
                 continue
             timestamp = item.get("__REALTIME_TIMESTAMP")
             if timestamp:
-                try:
+                with contextlib.suppress(ValueError, TypeError):
                     timestamp = datetime.fromtimestamp(int(timestamp) / 1_000_000).isoformat()
-                except (ValueError, TypeError):
-                    pass
             entries.append(
                 {
                     "timestamp": timestamp,

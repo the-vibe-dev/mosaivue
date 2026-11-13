@@ -9,6 +9,75 @@ cw_require_root() {
   [[ ${EUID:-$(id -u)} -eq 0 ]] || cw_die "Run this command as root (sudo $0)."
 }
 
+# Prefixes enter systemd unit files and a recursive uninstall. Keep them to a
+# dedicated application directory, with no shell/systemd substitution syntax.
+cw_validate_install_prefix() {
+  local candidate="$1" canonical
+  [[ "$candidate" =~ ^/[A-Za-z0-9._/-]+$ ]] || cw_die "Install prefix must be an absolute path without whitespace or special characters"
+  canonical="$(realpath -m -- "$candidate")"
+  case "$canonical" in
+    /opt/*|/srv/*|/usr/local/*|/var/opt/*) ;;
+    *) cw_die "Install prefix must be a dedicated directory below /opt, /srv, /usr/local, or /var/opt" ;;
+  esac
+  case "$canonical" in
+    /usr/local/bin|/usr/local/sbin|/usr/local/lib|/usr/local/share|/usr/local/etc|/usr/local/include)
+      cw_die "Install prefix cannot be a shared system directory" ;;
+  esac
+  printf '%s\n' "$canonical"
+}
+
+cw_assert_dedicated_prefix() {
+  local prefix="$1"
+  [[ ! -e "$prefix" ]] && return
+  [[ -d "$prefix" && ! -L "$prefix" ]] || cw_die "Install prefix must be a dedicated directory"
+  [[ -z "$(find "$prefix" -mindepth 1 -maxdepth 1 -print -quit)" ]] && return
+  [[ -d "$prefix/releases" && -f "$prefix/current/pyproject.toml" ]] && \
+    grep -Eq '^name = "mosaivue"$' "$prefix/current/pyproject.toml" || \
+    cw_die "Install prefix contains unrelated files; choose an empty dedicated directory or an existing Mosaivue installation"
+}
+
+cw_assert_config_entries() {
+  local directory="$1" entry
+  [[ ! -L "$directory" ]] || cw_die "Mosaivue configuration directory cannot be a symlink"
+  for entry in config.json master.key setup-token install-prefix python-bin; do
+    [[ ! -L "$directory/$entry" ]] || cw_die "Mosaivue configuration entry cannot be a symlink: $entry"
+    [[ ! -e "$directory/$entry" || -f "$directory/$entry" ]] || cw_die "Mosaivue configuration entry must be a regular file: $entry"
+    if [[ -f "$directory/$entry" ]]; then
+      [[ "$(stat -c '%h' "$directory/$entry")" == 1 ]] || cw_die "Mosaivue configuration entry cannot have hard links: $entry"
+    fi
+  done
+}
+
+# The old installer allowed the service user to replace directory entries in
+# /etc/mosaivue. Never execute a Python path or delete a prefix from that state.
+cw_read_root_metadata() {
+  local path="$1" fallback="$2" owner mode parent
+  if [[ ! -e "$path" && ! -L "$path" ]]; then
+    printf '%s\n' "$fallback"
+    return
+  fi
+  [[ -f "$path" && ! -L "$path" ]] || cw_die "Unsafe installer metadata: $path"
+  parent="$(dirname "$path")"
+  [[ ! -L "$parent" ]] || cw_die "Installer metadata directory cannot be a symlink"
+  read -r owner mode < <(stat -c '%u %a' "$parent")
+  [[ "$owner" == 0 ]] && (( (8#$mode & 8#22) == 0 )) || \
+    cw_die "Installer metadata directory is writable by the service account; run the new source install.sh once to repair ownership and permissions"
+  read -r owner mode < <(stat -c '%u %a' "$path")
+  [[ "$owner" == 0 ]] && (( (8#$mode & 8#22) == 0 )) || cw_die "Installer metadata must be root-owned and protected: $path"
+  cat -- "$path"
+}
+
+cw_write_root_metadata() {
+  local path="$1" value="$2" temporary
+  temporary="$(mktemp "$(dirname "$path")/.install-metadata.XXXXXX")"
+  printf '%s\n' "$value" >"$temporary"
+  chown root:mosaivue "$temporary"
+  chmod 0640 "$temporary"
+  # Replace the inode so a writer opened under an older beta cannot retain a
+  # writable descriptor to the root-consumed executable or installation path.
+  mv -Tf -- "$temporary" "$path"
+}
+
 cw_detect_platform() {
   CW_ARCH="$(dpkg --print-architecture 2>/dev/null || uname -m)"
   CW_KERNEL="$(uname -r)"

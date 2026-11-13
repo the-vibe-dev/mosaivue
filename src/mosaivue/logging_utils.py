@@ -6,25 +6,34 @@ import re
 import sys
 from datetime import UTC, datetime
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 _SECRET_KEYS = re.compile(r"password|secret|token|credential|authorization|cookie", re.I)
 _RTSP_URL = re.compile(r"(?P<scheme>rtsps?://)(?P<userinfo>[^/@\s]+@)", re.I)
+_URL = re.compile(r"\b(?:rtsps?|https?)://[^\s<>\"\']+", re.I)
+_SECRET_QUERY = re.compile(r"password|secret|token|credential|authorization|signature|api[_-]?key|access[_-]?key", re.I)
 
 
 def redact_url(value: str) -> str:
-    if not value.lower().startswith(("rtsp://", "rtsps://", "http://", "https://")):
-        return _RTSP_URL.sub(r"\g<scheme>***:***@", value)
-    try:
-        parts = urlsplit(value)
-        hostname = parts.hostname or ""
-        if parts.port:
-            hostname = f"{hostname}:{parts.port}"
-        if parts.username is not None:
-            hostname = f"{parts.username}:***@{hostname}"
-        return urlunsplit((parts.scheme, hostname, parts.path, parts.query, parts.fragment))
-    except ValueError:
-        return _RTSP_URL.sub(r"\g<scheme>***:***@", value)
+    def sanitized(match: re.Match[str]) -> str:
+        url = match.group(0)
+        try:
+            parts = urlsplit(url)
+            hostname = parts.hostname or ""
+            if ":" in hostname:
+                hostname = f"[{hostname}]"
+            if parts.port:
+                hostname = f"{hostname}:{parts.port}"
+            if parts.username is not None:
+                hostname = f"***:***@{hostname}"
+            query = urlencode([
+                (key, "***" if _SECRET_QUERY.search(key) else item)
+                for key, item in parse_qsl(parts.query, keep_blank_values=True)
+            ], safe="*")
+            return urlunsplit((parts.scheme, hostname, parts.path, query, parts.fragment))
+        except ValueError:
+            return _RTSP_URL.sub(r"\g<scheme>***:***@", url)
+    return _URL.sub(sanitized, value)
 
 
 def redact(value: Any) -> Any:

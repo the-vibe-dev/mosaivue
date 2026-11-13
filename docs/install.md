@@ -130,7 +130,7 @@ should then report a zero screen-saver timeout, zero DPMS timeouts, and
 
 ## First run
 
-The one-time token is printed by the installer and stored in `/etc/mosaivue/setup-token`. It is deleted after a successful administrator setup. The saved administrator password is hashed with scrypt.
+The one-time token is printed by the installer and stored in `/etc/mosaivue/setup-token`. It is consumed after successful administrator setup. On an installed appliance the service empties the token file, while the directory remains protected from replacement by the service account. The saved administrator password is hashed with scrypt.
 
 ## Reverse proxy
 

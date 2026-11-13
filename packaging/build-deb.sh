@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="$(awk -F'"' '/^version =/{print $2; exit}' "$ROOT/pyproject.toml")"
+PYTHON_VERSION="$(awk -F'"' '/^version =/{print $2; exit}' "$ROOT/pyproject.toml")"
+VERSION="$(python3 "$ROOT/packaging/debian_version.py" "$PYTHON_VERSION")"
 ARCH="$(dpkg --print-architecture)"; OUT="${1:-$ROOT/dist}"; STAGE="$(mktemp -d)"; trap 'rm -rf "$STAGE"' EXIT
 mkdir -p "$OUT" "$STAGE/DEBIAN" "$STAGE/usr/share/mosaivue/source"
 "$ROOT/scripts/copy-release-source.sh" "$STAGE/usr/share/mosaivue/source"

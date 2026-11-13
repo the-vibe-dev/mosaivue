@@ -6,7 +6,7 @@ from sqlalchemy.exc import IntegrityError
 
 from ..models import Layout, Schedule
 from ..schemas import ScheduleIn
-from .dependencies import Auth, CSRF, DB
+from .dependencies import CSRF, DB, Auth
 
 router = APIRouter(prefix="/schedules", tags=["schedules"])
 
@@ -42,6 +42,7 @@ async def create_schedule(payload: ScheduleIn, request: Request, db: DB, _: CSRF
     except IntegrityError as exc:
         raise HTTPException(status_code=409, detail="A schedule with this name already exists") from exc
     result = serialize(item)
+    db.commit()
     await request.app.state.events.publish("schedule.changed", result)
     return result
 
@@ -57,7 +58,12 @@ async def update_schedule(
         raise HTTPException(status_code=422, detail="Layout not found")
     for key, value in payload.model_dump().items():
         setattr(item, key, value)
+    try:
+        db.flush()
+    except IntegrityError as exc:
+        raise HTTPException(status_code=409, detail="A schedule with this name already exists") from exc
     result = serialize(item)
+    db.commit()
     await request.app.state.events.publish("schedule.changed", result)
     return result
 
@@ -68,4 +74,5 @@ def delete_schedule(schedule_id: str, db: DB, _: CSRF) -> Response:
     if item is None:
         raise HTTPException(status_code=404, detail="Schedule not found")
     db.delete(item)
+    db.commit()
     return Response(status_code=204)

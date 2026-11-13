@@ -1,27 +1,21 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import shutil
 import subprocess
-import sys
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import typer
 from rich.console import Console
 from rich.table import Table
-from sqlalchemy import select
 
 from . import __version__
 from .api.app import main as serve_main
 from .config import load_settings
-from .constants import CONFIG_DIR, DATA_DIR
 from .db import get_session_factory, init_db
 from .logging_utils import configure_logging, redact
-from .models import Layout
 from .renderer.daemon import main as renderer_main
 from .renderer.rpc import RendererRPCClient, RendererRPCError
 from .schemas import (
@@ -29,7 +23,6 @@ from .schemas import (
     CameraUpdate,
     LayoutCreate,
     LayoutData,
-    LayoutUpdate,
     StreamProfileIn,
 )
 from .security import CredentialCipher, KeyManager
@@ -462,6 +455,7 @@ def restore_command(
         counts = import_configuration(db, cipher, document, merge=merge)
         db.commit()
     console.print({"restored": counts})
+    console.print("[yellow]Configuration saved. Apply a layout or restart the renderer to use the restored configuration.[/yellow]")
 
 
 @app.command("export")
@@ -481,6 +475,7 @@ def import_command(source: Path, merge: bool = True) -> None:
         counts = import_configuration(db, cipher, document, merge=merge)
         db.commit()
     console.print(counts)
+    console.print("[yellow]Configuration saved. Apply a layout or restart the renderer to use the imported configuration.[/yellow]")
 
 
 @app.command("benchmark")

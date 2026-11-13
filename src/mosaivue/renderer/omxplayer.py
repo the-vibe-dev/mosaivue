@@ -97,13 +97,11 @@ class OmxPlayerRenderer(RendererBackend):
             "/usr/bin/omxplayer", "--no-keys", "--no-osd",
             "--aspect-mode", aspect, "--win", window,
         ]
-        if alpha is not None:
-            args.extend(["--alpha", str(alpha)])
-        if layer is not None:
-            args.extend(["--layer", str(layer)])
+        args.extend(["--alpha", str(alpha if alpha is not None else round(spec.opacity * 255))])
+        args.extend(["--layer", str(layer if layer is not None else spec.z_index * 10)])
         # RTSPS selects TLS in libavformat; forcing RTSP-over-TCP can override it.
-        if urlsplit(spec.url).scheme.lower() == "rtsp":
-            args.extend(["--avdict", "rtsp_transport:tcp"])
+        if urlsplit(spec.url).scheme.lower() == "rtsp" and spec.transport in {"tcp", "udp"}:
+            args.extend(["--avdict", f"rtsp_transport:{spec.transport}"])
         args.extend([
             spec.url, "--live", "-n", "-1", "--timeout", "30",
             "--dbus_name", "org.mpris.MediaPlayer2.omxplayer." + (dbus_name or cls._name(spec.slot_id)),
@@ -269,9 +267,11 @@ class OmxPlayerRenderer(RendererBackend):
 
     def resize_stream(self, slot_id: str, rect: Rect) -> None:
         with self._lock:
-            spec = self._players[slot_id].spec
-            spec.rect = rect
-            self.replace_stream(slot_id, spec)
+            player = self._players[slot_id]
+            if self._set_video_pos(player, rect):
+                player.spec.rect = rect
+            else:
+                self.replace_stream(slot_id, replace(player.spec, rect=rect))
 
     def set_crop_mode(self, slot_id: str, aspect_mode: str, crop: dict[str, float] | None = None) -> None:
         with self._lock:
@@ -297,14 +297,25 @@ class OmxPlayerRenderer(RendererBackend):
                 player.health.state = HealthState.disabled
 
     def set_opacity(self, slot_id: str, opacity: float) -> None:
-        self._players[slot_id].spec.opacity = opacity
+        with self._lock:
+            player = self._players[slot_id]
+            opacity = max(0.0, min(1.0, opacity))
+            # --alpha is honored by OMXPlayer at process startup. A controlled
+            # replacement is portable across legacy builds with different
+            # D-Bus interfaces.
+            self.replace_stream(slot_id, replace(player.spec, opacity=opacity))
 
     def set_label(self, slot_id: str, label: str | None, title_position: str) -> None:
         self._players[slot_id].spec.label = label
         self._players[slot_id].spec.title_position = title_position
 
     def set_z_order(self, slot_id: str, z_index: int) -> None:
-        self._players[slot_id].spec.z_index = z_index
+        with self._lock:
+            player = self._players[slot_id]
+            if self._set_layer(player, z_index * 10):
+                player.spec.z_index = z_index
+            else:
+                self.replace_stream(slot_id, replace(player.spec, z_index=z_index))
 
     def snapshot(self, slot_id: str | None = None) -> bytes | None:
         return None

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import replace
 from typing import Any
 
 from .base import HealthState, Rect, RendererBackend, RendererCapabilities, StreamHealth, StreamSpec

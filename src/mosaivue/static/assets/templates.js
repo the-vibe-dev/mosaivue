@@ -14,4 +14,12 @@ export function templateGeometry(count) {
     }
     return result;
 }
+/** Equal-sized camera tiles, ordered from left to right and top to bottom. */
+export function gridGeometry(size) {
+    if (!Number.isInteger(size) || size < 2 || size > 4)
+        throw new RangeError('Grid size must be 2, 3, or 4');
+    return Array.from({ length: size * size }, (_, index) => [
+        (index % size) / size, Math.floor(index / size) / size, 1 / size, 1 / size,
+    ]);
+}
 //# sourceMappingURL=templates.js.map

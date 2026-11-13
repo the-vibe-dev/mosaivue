@@ -661,3 +661,32 @@ body.editor-mode .app-shell { display: block; }
 body.editor-mode .sidebar, body.editor-mode .topbar { display: none; }
 body.editor-mode .page-content { width: 100%; max-width: none; padding: 0; }
 body.editor-mode .editor-shell { height: 100vh; margin: 0; }
+
+/* Camera onboarding, reusable groups, and scheduling share the existing visual system. */
+[hidden] { display: none !important; }
+.camera-status-filter { width: auto; min-width: 145px; }
+.filter-empty, .schedule-help { color: var(--text-soft); font-size: 13px; line-height: 1.65; }
+.filter-empty { padding: 18px; text-align: center; }
+.schedule-help { margin: 0 0 20px; }
+.day-choices { display: flex; flex-wrap: wrap; gap: 12px 18px; padding: 8px 0; }
+.day-choices label { display: flex; align-items: center; gap: 7px; font-size: 12px; }
+.day-choices input, .rotation-entry input[type="checkbox"] { accent-color: var(--accent); }
+.rotation-entry-list { display: grid; gap: 8px; max-height: 440px; overflow-y: auto; }
+.rotation-entry { display: grid; grid-template-columns: minmax(130px, 1fr) minmax(120px, 1fr) 72px auto; align-items: end; gap: 12px; padding: 12px; border: 1px solid var(--border); border-radius: 9px; }
+.rotation-entry > label:not(.checkbox-row) { display: grid; gap: 5px; font-size: 11px; color: var(--text-soft); }
+.rotation-entry .checkbox-row { align-self: center; }
+.rotation-entry .checkbox-row span { display: grid; gap: 4px; }
+.rotation-entry small { font-size: 10px; color: var(--muted); }
+.entry-order { display: flex; gap: 3px; }
+#onvif-profiles { margin-top: 16px; }
+#onvif-profiles .camera-check-list label { grid-template-columns: auto minmax(0, 1fr); }
+.rotation-card .card-actions { flex-wrap: wrap; }
+@media (max-width: 600px) {
+  .rotation-entry { grid-template-columns: minmax(0, 1fr) 80px; }
+  .rotation-entry .checkbox-row { grid-column: 1 / -1; }
+  .entry-order { justify-content: flex-end; }
+  .camera-status-filter { width: 100%; }
+}
+
+.restore-result { margin-top: 20px; padding: 20px; }
+.restore-result h2 { margin-top: 0; }
