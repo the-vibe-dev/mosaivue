@@ -23,7 +23,17 @@ The reviewed source was applied to the Mosaivue repository on November 13, 2026.
 - Browser: **5 passed** against an isolated local test-backend server with seeded demo cameras and Chromium. Desktop dashboard and mobile schedules rendered; the tested navigation produced no page errors. This qualifies those control workflows only, not video playback.
 - The browser run found that editing a camera without credentials could create an encrypted empty password. The camera service now ignores a null-only credential edit and reports an empty password accurately. A focused unit regression and the camera-edit browser workflow pass.
 
-No Pi, ROCK Pi, Ubuntu HDMI, real decoder, privileged install/rollback or long-duration soak was run for this integrated candidate.
+At the time of that local integration check, no Pi, ROCK Pi, Ubuntu HDMI, real decoder, privileged install/rollback or long-duration soak had been run for this integrated candidate.
+
+## Appliance qualification started November 13, 2026
+
+The source archive built from commit `6b206cd` was verified by SHA-256 on each installed device before use. It contains the reviewed b3 changes plus the camera credential fix and Bullseye installer corrections.
+
+- **Pi 3B+ / 32-bit Bullseye / OMXPlayer:** An upgrade from 0.1.0b1 exposed two incompatible piwheels native binaries. The installer restored the previous release after each failed attempt; the old wall returned to 7/7 LIVE and HTTP health passed. The corrected installer selects checksum-pinned upstream ARMv7 `cryptography` and `pydantic-core` wheels and imports the web and renderer entry points before stopping services. The subsequent privileged upgrade completed. Initial b3 checks showed 7/7 LIVE, ten rotation switches, zero restarts, both services active and HTTP health passing. A 24-hour observer is recording; no completed soak result is claimed yet.
+- **Ubuntu GPU VM / GStreamer:** The final source commit installed successfully with rollback snapshots retained. The VM's address changed after its host move. One legacy camera hostname failed DNS; its endpoint was changed to the same reachable UniFi host used by the other cameras, and its probe succeeded. A real camera using NVIDIA decoding and a headless sink stayed LIVE and advanced from 88 to 568 frames in 25 seconds. The passed-through NVIDIA GPU still reports its physical HDMI/DP connectors disconnected; the full X11 wall remains unstable and physical HDMI qualification has not started. A separate observer records its preconnection state.
+- **ROCK Pi:** The former `.180` gateway and the ROCK Pi are unreachable from the test network. No b3 install or soak has started there.
+
+The Pi 3 privileged installer and rollback behavior now has direct appliance evidence. The Ubuntu physical display, ROCK Pi installation, and 24-hour results remain pending.
 
 ## Historical site evidence
 
