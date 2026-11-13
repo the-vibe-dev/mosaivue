@@ -84,6 +84,39 @@ def choose_decoders(candidates: list[dict[str, Any]]) -> dict[str, str | None]:
     return {"fixed": hardware or software, "rotation": software or hardware}
 
 
+def working_software_decoder(codec: str, entry: dict[str, Any]) -> str | None:
+    """Return a software decoder that passed the local probe for this codec."""
+    passed = {
+        candidate.get("name")
+        for candidate in entry.get("candidates", [])
+        if candidate.get("kind") == "software" and candidate.get("probe") == "passed"
+    }
+    return preferred_software_decoder(codec, passed)
+
+
+def retain_verified_fallbacks(report: dict[str, Any], previous: dict[str, Any]) -> None:
+    """Keep runtime-proven software choices across installer re-probes."""
+    for codec, entry in report.get("codecs", {}).items():
+        old = previous.get("codecs", {}).get(codec, {})
+        if old.get("fixed_source") != "runtime_verified_software":
+            continue
+        software = working_software_decoder(codec, entry)
+        if software == old.get("fixed"):
+            entry["fixed"] = software
+            entry["fixed_source"] = "runtime_verified_software"
+            for key in ("runtime_verified_sink", "runtime_verified_slots", "runtime_verified_at"):
+                if key in old:
+                    entry[key] = old[key]
+
+
+def _save_decoder_policy(report: dict[str, Any], path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    os.chmod(temporary, 0o640)
+    temporary.replace(path)
+
+
 def detect_decoder_policy() -> dict[str, Any]:
     try:
         import gi
@@ -126,12 +159,23 @@ def detect_decoder_policy() -> dict[str, Any]:
 
 def write_decoder_policy(path: Path = DECODER_POLICY_PATH) -> dict[str, Any]:
     report = detect_decoder_policy()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(".tmp")
-    temporary.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-    os.chmod(temporary, 0o640)
-    temporary.replace(path)
+    retain_verified_fallbacks(report, load_decoder_policy(path))
+    _save_decoder_policy(report, path)
     return report
+
+
+def persist_fixed_decoder_fallback(
+    codec: str, decoder: str, path: Path = DECODER_POLICY_PATH
+) -> bool:
+    """Persist a decoder only after a real fixed camera produces frames with it."""
+    report = load_decoder_policy(path)
+    entry = report.get("codecs", {}).get(codec)
+    if not isinstance(entry, dict) or working_software_decoder(codec, entry) != decoder:
+        return False
+    entry["fixed"] = decoder
+    entry["fixed_source"] = "runtime_verified_software"
+    _save_decoder_policy(report, path)
+    return True
 
 
 def load_decoder_policy(path: Path = DECODER_POLICY_PATH) -> dict[str, Any]:

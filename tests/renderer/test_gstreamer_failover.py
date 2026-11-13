@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from mosaivue.renderer.base import HealthState, Rect, StreamSpec
+from mosaivue.renderer.base import HealthState, Rect, StreamHealth, StreamSpec
 from mosaivue.renderer.gstreamer import (
     GStreamerRenderer,
     _normalized_rotation_caps,
@@ -24,6 +24,23 @@ def test_rotation_caps_normalization_is_explicit_and_keeps_even_dimensions() -> 
     for invalid in ("640", "641x360", "640x361", "64x36", "9999x9999"):
         with pytest.raises(ValueError):
             _rotation_normalize_size(invalid)
+
+
+def test_kms_sink_scans_the_composited_wall_across_the_full_mode() -> None:
+    renderer = object.__new__(GStreamerRenderer)
+    properties = {}
+    sink = SimpleNamespace(
+        find_property=lambda name: name in {"sync", "force-aspect-ratio", "force-modesetting"},
+        set_property=lambda name, value: properties.__setitem__(name, value),
+    )
+    renderer.Gst = SimpleNamespace(ElementFactory=SimpleNamespace(make=lambda *_: sink))
+
+    assert renderer._make_sink("kmssink") is sink
+    assert properties == {
+        "sync": False,
+        "force-aspect-ratio": False,
+        "force-modesetting": False,
+    }
 
 
 def test_rotation_normalization_uses_common_caps_dimensions_for_geometry() -> None:
@@ -102,9 +119,13 @@ def test_inactive_selector_pad_accepts_live_standby_buffers() -> None:
 def test_installed_decoder_choices_apply_to_fixed_and_rotating_tiles() -> None:
     renderer = object.__new__(GStreamerRenderer)
     renderer._decoder_policy = {
-        "codecs": {"h264": {"fixed": "nvh264dec", "rotation": "avdec_h264"}}
+        "codecs": {"h264": {
+            "fixed": "nvh264dec", "rotation": "avdec_h264",
+            "candidates": [{"name": "avdec_h264", "kind": "software", "probe": "passed"}],
+        }}
     }
     renderer._rotation_software_decode = False
+    renderer._software_fallback_slots = set()
     renderer.Gst = SimpleNamespace(
         ElementFactory=SimpleNamespace(find=lambda name: object() if name else None)
     )
@@ -117,20 +138,29 @@ def test_installed_decoder_choices_apply_to_fixed_and_rotating_tiles() -> None:
         return SimpleNamespace(get_name=lambda: name, get_metadata=lambda _: klass)
 
     select = renderer._select_decoder_factory
-    assert select(None, None, caps, factory("nvh264dec"), False) == 0
-    assert select(None, None, caps, factory("avdec_h264"), False) == 2
-    assert select(None, None, caps, factory("nvh264dec"), True) == 2
-    assert select(None, None, caps, factory("avdec_h264"), True) == 0
-    assert select(None, None, caps, factory("h264parse", "Codec/Parser/Video"), True) == 0
+    assert select(None, None, caps, factory("nvh264dec"), False, "fixed") == 0
+    assert select(None, None, caps, factory("avdec_h264"), False, "fixed") == 2
+    assert select(None, None, caps, factory("nvh264dec"), True, "rotation") == 2
+    assert select(None, None, caps, factory("avdec_h264"), True, "rotation") == 0
+    assert select(None, None, caps, factory("h264parse", "Codec/Parser/Video"), True, "rotation") == 0
+
+    renderer._software_fallback_slots.add("fixed")
+    assert select(None, None, caps, factory("nvh264dec"), False, "fixed") == 2
+    assert select(None, None, caps, factory("avdec_h264"), False, "fixed") == 0
 
     renderer._rotation_software_decode = True
     renderer._decoder_policy = {"codecs": {}}
-    assert select(None, None, caps, factory("nvh264dec"), True) == 2
-    assert select(None, None, caps, factory("avdec_h264"), True) == 0
+    assert select(None, None, caps, factory("nvh264dec"), True, "rotation") == 2
+    assert select(None, None, caps, factory("avdec_h264"), True, "rotation") == 0
 
 
 def test_first_frame_timeout_retries_only_stuck_camera() -> None:
     renderer = object.__new__(GStreamerRenderer)
+    renderer._decoder_policy = {"codecs": {"h264": {
+        "fixed": "nvh264dec", "rotation": "avdec_h264",
+        "candidates": [{"name": "avdec_h264", "kind": "software", "probe": "passed"}],
+    }}}
+    renderer._software_fallback_slots = set()
     now = time.monotonic()
     renderer._slots = {
         "stuck": SimpleNamespace(
@@ -160,6 +190,7 @@ def test_first_frame_timeout_retries_only_stuck_camera() -> None:
     assert renderer._watchdog_tick() is True
     assert renderer._health["stuck"].state == HealthState.offline
     assert renderer._health["stuck"].detail == "No first video frame received within 20 seconds"
+    assert renderer._software_fallback_slots == {"stuck"}
     assert renderer._health["healthy"].state == HealthState.live
     assert [delay for delay, _ in scheduled] == [1]
     assert renderer._health["stuck"].reconnect_backoff_seconds == 2.0
@@ -170,6 +201,43 @@ def test_first_frame_timeout_retries_only_stuck_camera() -> None:
     scheduled[0][1]()
     assert retried == ["stuck"]
     assert renderer._slots["stuck"].reconnect_source_id is None
+
+
+def test_first_software_frame_schedules_persistent_decoder_choice(monkeypatch) -> None:
+    renderer = object.__new__(GStreamerRenderer)
+    queue = object()
+    renderer._slots = {"fixed": SimpleNamespace(
+        source_queue=queue,
+        spec=SimpleNamespace(source_width=640, source_height=360),
+    )}
+    renderer._health = {"fixed": StreamHealth(
+        slot_id="fixed", camera_id="camera", decoder_selected="avdec_h264",
+    )}
+    renderer._software_fallback_slots = {"fixed"}
+    renderer._persisted_software_fallback_slots = set()
+    scheduled = []
+    renderer.GLib = SimpleNamespace(
+        idle_add=lambda callback, *args: scheduled.append((callback, args))
+    )
+    renderer.Gst = SimpleNamespace(PadProbeReturn=SimpleNamespace(OK="ok"))
+    renderer._decoder_policy = {"codecs": {"h264": {
+        "fixed": "nvh264dec", "rotation": "avdec_h264",
+        "candidates": [{"name": "avdec_h264", "kind": "software", "probe": "passed"}],
+    }}}
+    persisted = []
+    monkeypatch.setattr(
+        "mosaivue.renderer.gstreamer.persist_fixed_decoder_fallback",
+        lambda codec, decoder: persisted.append((codec, decoder)) or True,
+    )
+
+    assert renderer._on_frame(None, None, "fixed", queue) == "ok"
+    assert renderer._health["fixed"].state == HealthState.live
+    assert renderer._persisted_software_fallback_slots == {"fixed"}
+    assert scheduled[0][0] == renderer._persist_software_fallback
+    assert scheduled[0][1] == ("fixed", "avdec_h264")
+    assert scheduled[0][0](*scheduled[0][1]) is False
+    assert persisted == [("h264", "avdec_h264")]
+    assert renderer._decoder_policy["codecs"]["h264"]["fixed"] == "avdec_h264"
 
 
 def test_first_frame_timeout_waits_for_pending_branch_refresh() -> None:
