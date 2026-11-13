@@ -23,4 +23,4 @@ The 328-file bundle manifest passed and its patch applied to the committed b3 tr
 - Source tarball and amd64 Debian package builds succeeded from the integrated tree; both generated SHA-256 manifests verified. No privileged install was attempted.
 - PTZ is **not implemented in b4** and no PTZ camera is available for physical protocol testing. Keep PTZ and presets out of supported-feature claims until implementation and vendor-camera acceptance are complete.
 
-No b4 build has been installed on the Pi 3, Ubuntu VM or ROCK Pi. Their b3 observation remains separate from this candidate's software checks.
+After this local handoff, b4 was installed on the Pi 3 and Ubuntu test VM under a controlled rollout. The Pi returned to 7/7 LIVE after a reboot; Ubuntu reached 7/7 LIVE with advancing decoded frames on a temporary headless sink. **Neither 24-hour window is complete**, Ubuntu physical HDMI remains untested, and the ROCK Pi remains offline. See [the dated b4 rollout record](docs/review/b4-live-rollout.md). These b4 observations are separate from the supplied b3 results above.

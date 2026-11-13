@@ -1,6 +1,6 @@
 # Install and qualify the b4 candidate
 
-This guide covers the delivered **0.1.0b4** source. The online bootstrap follows published releases and may install an older version. This review has not published or deployed b4. No database migration was added; settings validation, runtime behavior and the interface have changed.
+This guide covers the delivered **0.1.0b4** source. The online bootstrap follows published releases and may install an older version. The supplied review did not publish or deploy b4; a later [controlled appliance rollout](b4-live-rollout.md) is now in progress. No database migration was added; settings validation, runtime behavior and the interface have changed.
 
 ## Prepare recovery and configuration
 

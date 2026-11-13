@@ -36,6 +36,10 @@ On the connected development host, the complete non-browser Python suite passed 
 
 These local checks do not qualify b4 camera playback or appliance installation. PTZ/presets remain unimplemented, and no PTZ camera is available for a physical compatibility test. Do not report PTZ support or a PTZ hardware pass from ONVIF Media1 import tests.
 
+### Controlled appliance rollout after local integration
+
+The later [b4 live rollout](b4-live-rollout.md) records successful installer upgrades on the Pi 3 and Ubuntu VM, Pi cold-start recovery after reboot, and a seven-stream Ubuntu headless GStreamer wall with advancing decoded frames. Its 24-hour observations are **in progress**; Ubuntu physical HDMI, ROCK Pi and PTZ hardware remain untested. These hardware results do not retroactively change the supplied review's environment-limited claims above.
+
 ## Scanner interpretation
 
 The dependency audit is a point-in-time check of the installed Python runtime graph. Future resolver selections, other architectures, OS/media packages, GPU drivers and camera firmware are outside it. The SPDX-style inventory records installed distribution metadata with `NOASSERTION` fields; it is not a complete OS dependency lock or license clearance.
