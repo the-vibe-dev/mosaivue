@@ -224,6 +224,13 @@ if [[ "$CW_ARCH" == armhf && "$CW_OS_VERSION" == 11 ]]; then
   printf '%s  %s\n' 'ac9ed99d81760c62fe89d5f0815cdfa1ba9a35141cf30f1c2d044f04b4803d2e' "$CRYPTO_WHEEL" | sha256sum -c -
   "$RELEASE_DIR.new/.venv/bin/pip" install --no-deps "$CRYPTO_WHEEL"
   rm -f "$CRYPTO_WHEEL"
+  # The piwheels pydantic-core binary also requires glibc 2.34. Use the
+  # upstream manylinux2014 build, which runs on Bullseye's glibc 2.31.
+  PYDANTIC_CORE_WHEEL="$RELEASE_DIR.new/pydantic_core-2.50.4-cp311-cp311-manylinux2014_armv7l.manylinux_2_17_armv7l.whl"
+  curl -fsSL 'https://files.pythonhosted.org/packages/d6/d1/44f541b2c18a46df6f18281a557acefeb5bbf0733a0b80b0a5e835e10ee4/pydantic_core-2.50.4-cp311-cp311-manylinux2014_armv7l.manylinux_2_17_armv7l.whl' -o "$PYDANTIC_CORE_WHEEL"
+  printf '%s  %s\n' '789f88dea57841cdebef392b5d6e90444d767117e9ff2e0d9172df5c9de6690c' "$PYDANTIC_CORE_WHEEL" | sha256sum -c -
+  "$RELEASE_DIR.new/.venv/bin/pip" install --no-deps "$PYDANTIC_CORE_WHEEL"
+  rm -f "$PYDANTIC_CORE_WHEEL"
 fi
 if [[ "$DEV" -eq 1 ]]; then
   "$RELEASE_DIR.new/.venv/bin/pip" install -e "$RELEASE_DIR.new"
@@ -234,6 +241,8 @@ fi
 # before stopping a running wall for database migration.
 "$RELEASE_DIR.new/.venv/bin/python" - <<'PY'
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from mosaivue.api.app import create_app  # noqa: F401
+from mosaivue.renderer.daemon import main as renderer_main  # noqa: F401
 
 key = AESGCM.generate_key(bit_length=256)
 cipher = AESGCM(key)

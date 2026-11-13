@@ -15,7 +15,7 @@ This is a locally delivered review candidate. It has not been published automati
 
 ### Fixed
 
-- The 32-bit Bullseye installer selects the verified upstream ARMv7 `cryptography` wheel and tests its native extension before stopping existing services; this avoids a piwheels build that requires unavailable `libssl.so.3`.
+- The 32-bit Bullseye installer selects verified upstream ARMv7 `cryptography` and `pydantic-core` wheels and imports the web/renderer entry points before stopping existing services; this avoids piwheels binaries that require unavailable `libssl.so.3` or glibc 2.34.
 - Camera edits with no saved credentials no longer create an encrypted empty password; the API reports a username-only camera as having no password.
 - Sanitized configuration merges retain local camera credentials; restoration remaps selected stream-profile references, preserves the exported current revision, avoids revision uniqueness collisions and retains a single active wall.
 - Nested import validation and SQLite transaction handling reject invalid graphs and roll back failed imports. API restore separates saved configuration from successful renderer application; CLI restore/import prints the required reapply instruction.
