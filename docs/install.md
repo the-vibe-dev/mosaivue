@@ -51,7 +51,7 @@ upgrade. The installer manages
 includes it in the pre-install snapshot, and restores it if installation fails.
 Other platforms default to off. Verify the displayed camera crops after setup.
 
-On AMD64 Debian 12+ or Ubuntu 24.04+, the release `.deb` can be installed with `sudo apt install ./mosaivue_<version>_amd64.deb`. The package uses the same installer and keeps OS package dependencies in its metadata. ARM devices use the source bootstrap above. The 32-bit Bullseye/OMXPlayer path needs that bootstrap because its OS does not provide Python 3.11 as a Debian package.
+On AMD64 Debian 12+ or Ubuntu 24.04+, the release `.deb` can be installed with `sudo apt install ./mosaivue_<version>_amd64.deb`. The package uses the same installer and keeps OS package dependencies in its metadata. ARM devices use the source bootstrap above. The 32-bit Bullseye/OMXPlayer path needs that bootstrap because its OS does not provide Python 3.11 as a Debian package. On that path, the source installer also fetches a checksum-pinned upstream `cryptography` ARMv7 wheel: the same-version piwheels wheel requires `libssl.so.3`, which Bullseye lacks. The installer verifies an AES-GCM round trip before stopping an existing wall.
 
 ## Bind modes
 

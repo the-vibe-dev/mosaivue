@@ -216,12 +216,31 @@ if [[ "$CW_ARCH" == armhf && "$CW_OS_VERSION" == 11 ]]; then
   # Build this small extension against the target image before resolving
   # cryptography; the app install will keep the satisfied version.
   "$RELEASE_DIR.new/.venv/bin/pip" install --no-cache-dir --no-binary=cffi 'cffi==2.1.1'
+  # The piwheels cryptography 50.0.2 wheel links to libssl.so.3, which is
+  # absent on Bullseye. Pin the upstream armv7l wheel with bundled OpenSSL
+  # instead of accepting whichever index wins pip's same-version selection.
+  CRYPTO_WHEEL="$RELEASE_DIR.new/cryptography-50.0.2-cp311-abi3-manylinux_2_31_armv7l.whl"
+  curl -fsSL 'https://files.pythonhosted.org/packages/7c/52/9af10e80ac16b0fcc2123f9cbd5e7afbd0fd5075bb7a607c592258a39cda/cryptography-50.0.2-cp311-abi3-manylinux_2_31_armv7l.whl' -o "$CRYPTO_WHEEL"
+  printf '%s  %s\n' 'ac9ed99d81760c62fe89d5f0815cdfa1ba9a35141cf30f1c2d044f04b4803d2e' "$CRYPTO_WHEEL" | sha256sum -c -
+  "$RELEASE_DIR.new/.venv/bin/pip" install --no-deps "$CRYPTO_WHEEL"
+  rm -f "$CRYPTO_WHEEL"
 fi
 if [[ "$DEV" -eq 1 ]]; then
   "$RELEASE_DIR.new/.venv/bin/pip" install -e "$RELEASE_DIR.new"
 else
   "$RELEASE_DIR.new/.venv/bin/pip" install "$RELEASE_DIR.new"
 fi
+# Verify the cryptography native extension and an authenticated round trip
+# before stopping a running wall for database migration.
+"$RELEASE_DIR.new/.venv/bin/python" - <<'PY'
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+key = AESGCM.generate_key(bit_length=256)
+cipher = AESGCM(key)
+nonce = b"install-test"
+message = b"installer dependency check"
+assert cipher.decrypt(nonce, cipher.encrypt(nonce, message, None), None) == message
+PY
 # The service account needs traversal and read access to this root-built venv.
 chmod -R a+rX "$RELEASE_DIR.new/.venv"
 
