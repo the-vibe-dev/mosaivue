@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import pytest
 from sqlalchemy.orm import Session
 
 from mosaivue.models import Camera
 from mosaivue.schemas import LayoutCreate, LayoutData, LayoutUpdate, Slot
+from mosaivue.services.backup import export_configuration, import_configuration
 from mosaivue.services.layouts import LayoutService
 
 
@@ -100,3 +102,25 @@ def test_missing_display_profile_fails_validation_not_database_insert(db):
 
     with pytest.raises(LayoutValidationError, match="Display profile"):
         LayoutService(db).create(LayoutCreate(name="Missing display", display_profile_id="missing"))
+
+
+@pytest.mark.parametrize("action", ["edit", "restore-history"])
+def test_restored_current_revision_can_be_older_than_existing_drafts(db, cipher, action):
+    service = LayoutService(db)
+    layout = service.create(LayoutCreate(name="Restored history", data=LayoutData(output_width=1920)))
+    service.update(layout.id, LayoutUpdate(data=LayoutData(output_width=1280)))
+    document = export_configuration(db, cipher)
+    document["layouts"][0]["current_revision"] = 1
+    import_configuration(db, cipher, document, merge=True)
+    assert service.get(layout.id).current_revision == 1
+
+    if action == "edit":
+        updated = service.update(layout.id, LayoutUpdate(data=LayoutData(output_width=1024)))
+        expected_width = 1024
+    else:
+        updated = service.restore_revision(layout.id, 2)
+        expected_width = 1280
+    assert updated.current_revision == 3
+    revisions = service.revisions(layout.id)
+    assert [item.revision for item in revisions] == [3, 2, 1]
+    assert [item.data["output_width"] for item in revisions] == [expected_width, 1280, 1920]

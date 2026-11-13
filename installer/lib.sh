@@ -9,6 +9,18 @@ cw_require_root() {
   [[ ${EUID:-$(id -u)} -eq 0 ]] || cw_die "Run this command as root (sudo $0)."
 }
 
+# A trusted checkout is an install input, not a permanent grant to replace
+# installed update/uninstall helpers that an administrator later runs as root.
+cw_stage_source() {
+  local source="$1" destination="$2"
+  cw_require_root
+  rsync -a --delete --safe-links --chown=root:root --chmod=u=rwX,go=rX,ug-s,-t \
+    --exclude '.git' --exclude '.venv' --exclude 'frontend/node_modules' --exclude 'frontend/dist' \
+    --exclude '__pycache__' --exclude '.pytest_cache' --exclude '*.pyc' \
+    "$source/" "$destination/"
+  chmod 0755 "$destination"
+}
+
 # Prefixes enter systemd unit files and a recursive uninstall. Keep them to a
 # dedicated application directory, with no shell/systemd substitution syntax.
 cw_validate_install_prefix() {
@@ -34,6 +46,27 @@ cw_assert_dedicated_prefix() {
   [[ -d "$prefix/releases" && -f "$prefix/current/pyproject.toml" ]] && \
     grep -Eq '^name = "mosaivue"$' "$prefix/current/pyproject.toml" || \
     cw_die "Install prefix contains unrelated files; choose an empty dedicated directory or an existing Mosaivue installation"
+}
+
+cw_assert_prefix_ancestors() {
+  local directory owner mode
+  directory="$(dirname "$1")"
+  while :; do
+    if [[ -e "$directory" ]]; then
+      [[ -d "$directory" && ! -L "$directory" ]] || cw_die "Install prefix ancestors must be real directories"
+      read -r owner mode < <(stat -c '%u %a' "$directory")
+      [[ "$owner" == 0 ]] && (( (8#$mode & 8#22) == 0 )) || \
+        cw_die "Install prefix ancestors must be root-owned and not group/other writable: $directory"
+    fi
+    [[ "$directory" == / ]] && break
+    directory="$(dirname "$directory")"
+  done
+}
+
+cw_assert_release_directory() {
+  local directory="$1/releases"
+  [[ ! -L "$directory" && ( ! -e "$directory" || -d "$directory" ) ]] || \
+    cw_die "Installed releases must be a real directory, not a symlink or file"
 }
 
 cw_assert_config_entries() {
@@ -116,6 +149,17 @@ cw_validate_os() {
 
 cw_ipv4() {
   hostname -I 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i !~ /^127\./ && $i !~ /:/){print $i; exit}}'
+}
+
+# asyncio/uvicorn IPv6 listeners need an IPv6 health probe. IPv4 loopback is
+# not interchangeable with an explicit IPv6 wildcard bind.
+cw_health_host() {
+  case "$1" in
+    0.0.0.0) printf '127.0.0.1\n' ;;
+    ::) printf '[::1]\n' ;;
+    *:*) printf '[%s]\n' "$1" ;;
+    *) printf '%s\n' "$1" ;;
+  esac
 }
 
 cw_valid_rotation_size() {

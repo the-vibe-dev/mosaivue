@@ -8,14 +8,14 @@ Mosaivue is a local-first camera-monitor appliance for Raspberry Pi and Linux. I
 
 Mosaivue is designed for Raspberry Pi OS Lite and does not require a desktop session. The control plane, camera credentials, layouts, health data, and previews stay on the appliance. There is no required cloud account, analytics service, or telemetry.
 
-> **Review candidate: 0.1.0b3.** This archive contains the November 12, 2026 reliability and onboarding improvements. It is not a published or hardware-qualified release. Read [the review](docs/review/report.md), [validation results](docs/review/validation.md), and [upgrade instructions](docs/review/upgrade.md).
+> **Review candidate: 0.1.0b4.** This archive contains the November 13, 2026 follow-up reliability, installer and operator-interface improvements. Read [the current review](docs/review/current-report.md), [validation results](docs/review/current-validation.md), and [upgrade instructions](docs/review/current-upgrade.md). Your supplied b3 browser and appliance observations are preserved in [their original record](docs/review/supplied-b3-build-verification.md); they do not qualify the changed b4 runtime.
 
 > **Published baseline (0.1.0b2):** v0.1.0b2 is the first public beta. In a 23-hour sample window, the tested Pi 3B+, ROCK Pi 4B+, and Ubuntu GPU walls each kept seven of seven tiles LIVE with one renderer process and advancing rotation. The ROCK Pi's installer-managed 640×360 normalization kept its two 16:9 rotating feeds on matching caps through more than 5,500 cuts; one fixed tile recovered from a cold-start retry. These are site results, not stream-count guarantees. Other camera aspect ratios and Raspberry Pi 4/5 physical output remain unqualified. See [beta notes](docs/beta-release.md).
 
 ## What is included
 
 - Persistent camera registry with stable multiple RTSP profiles per camera, plus ONVIF Media1 profile import from a known device-service endpoint
-- Credentials encrypted at rest with AES-256-GCM and omitted from API responses and sanitized exports. The legacy OMXPlayer backend passes a resolved stream URL to its local player process; see [security boundaries](docs/security.md).
+- Camera passwords encrypted at rest with AES-256-GCM and omitted from camera API responses. Usernames remain available to authenticated administrators; sanitized exports omit username/password fields. Opaque secrets inside stream URLs are a separate unresolved boundary. The legacy OMXPlayer backend passes a resolved stream URL to its local player process; see [security boundaries](docs/security.md).
 - Reusable layouts stored in normalized coordinates, with optional pixel overrides
 - Drag, resize, multi-select, align, distribute, duplicate, lock, undo, redo, copy, paste, grid snap, and exact geometry in the browser editor
 - Fixed, manual/selectable, empty, and independently rotating slots
@@ -23,7 +23,7 @@ Mosaivue is designed for Raspberry Pi OS Lite and does not require a desktop ses
 - Automatic source-profile selection so small tiles can use camera substreams
 - GStreamer compositor with isolated per-stream branches and an OMXPlayer option for legacy Pi hardware
 - Per-stream health, reconnect backoff, placeholder fallback, and independent stream restart
-- Layout revision history and last-known-good activation behavior
+- Layout revision history, synchronous activation rollback, and saved/applied revision status with explicit reapplication
 - Focus/fullscreen camera mode with restore
 - Browser-managed overnight/day schedules, phone-friendly display remote, and session-scoped Server-Sent Events
 - FastAPI REST API and OpenAPI documentation
@@ -33,6 +33,7 @@ Mosaivue is designed for Raspberry Pi OS Lite and does not require a desktop ses
 - `displaycameras` configuration migration with dry-run reporting
 - Idempotent installer, conservative uninstaller, update helper, systemd hardening, source releases, and Debian packaging scripts
 - Unit, integration, API, renderer-contract, migration, backup, and frontend tests
+- Typed appliance settings, bounded/coalesced preview and probe work, short internal JPEG caching, and an explicit backend capability matrix
 
 Browse the [documentation index](docs/index.md) for installation, camera setup, layouts, rendering, security, and beta qualification.
 
@@ -85,8 +86,8 @@ It downloads a versioned source release, verifies its SHA-256 checksum, and runs
 To install a source archive directly:
 
 ```bash
-tar -xzf mosaivue-0.1.0b3-source.tar.gz
-cd mosaivue-0.1.0b3
+tar -xzf mosaivue-0.1.0b4-source.tar.gz
+cd mosaivue-0.1.0b4
 sudo bash installer/install-local.sh
 ```
 
@@ -122,7 +123,7 @@ The bootstrap script can be inspected before the `sudo bash` step. It downloads 
 2. Use **Test stream** to inspect connection time, codec, resolution, transport, decoder selection, and time to first frame.
 3. Add lower-resolution substreams when the camera exposes them.
 4. Open **Layouts**, create a layout, and drag saved cameras onto the canvas.
-5. Resize or position the tiles, choose `contain`, `cover`, `stretch`, or `native`, then select **Save & Apply**.
+5. Resize or position the tiles, choose `contain`, `cover`, or `stretch`, then select **Save & Apply**. The editor disables controls that the selected backend reports as unsupported; `native` pixel sizing is not implemented by the current physical backends.
 6. Create a **Rotation group**, choose its cameras and interval, and assign it to one slot. Fixed slots remain in place while that slot rotates.
 
 ## Migrate displaycameras
@@ -204,7 +205,7 @@ python3 -m venv .venv
 . .venv/bin/activate
 pip install -e '.[dev]'
 cd frontend && npm run build && cd ..
-cp -a frontend/dist src/mosaivue/static
+cp -a frontend/dist/. src/mosaivue/static/
 pytest
 ./scripts/dev.sh
 ```

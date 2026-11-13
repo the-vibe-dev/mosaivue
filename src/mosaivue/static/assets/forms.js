@@ -24,7 +24,7 @@ export function rotationEntries(rows) {
 export function setGeometry(slot, field, percent) {
     if (!Number.isFinite(percent) || slot.locked)
         return slot;
-    const next = { ...slot };
+    const next = { ...slot, pixel_override: null };
     const value = Math.max(0, Math.min(1, percent / 100));
     if (field === 'x')
         next.x = Math.min(value, 1 - next.width);

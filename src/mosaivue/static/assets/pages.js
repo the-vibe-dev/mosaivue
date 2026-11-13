@@ -1,5 +1,8 @@
 import { api, download } from './api.js';
+import { renderBackup } from './backup.js';
 import { LayoutEditor } from './editor.js';
+import { renderDisplay } from './display.js';
+import { featureDescription, featureSupport, layoutDisplayState, rendererFeatures } from './display-state.js';
 import { newId } from './ids.js';
 import { credentialEdit, filterCameras, mergeProfileEdit, rotationEntries } from './forms.js';
 import { onvifDialog } from './onvif.js';
@@ -23,6 +26,7 @@ function cleanEditor() {
 function errorMessage(error) {
     return error instanceof Error ? error.message : String(error);
 }
+const reapplyHelp = '<p class="display-notice">Saving camera or rotation settings does not rebuild the current wall. <a href="/layouts" data-route>Apply or reapply a layout</a> to load all saved settings. Reapplying restarts its streams and ends camera focus.</p>';
 function streamCounts(stream) {
     const hint = stream.last_restart_reason
         ? `Last restart: ${stream.last_restart_reason}`
@@ -43,7 +47,8 @@ export async function dashboardPage() {
         ]);
         const backendLabels = { auto: 'Automatic', omxplayer: 'OMXPlayer (legacy Pi)', gstreamer: 'GStreamer (modern)' };
         const backendOptions = rendererConfig.options.map((option) => `<option value="${escapeHtml(option.name)}" ${option.name === rendererConfig.selected ? 'selected' : ''} ${!option.available ? 'disabled' : ''}>${escapeHtml(backendLabels[option.name] ?? option.name)}${option.available ? '' : ' — unavailable'}</option>`).join('');
-        const active = layouts.find((item) => item.active);
+        const active = layouts.find((item) => item.id === status.renderer.active_layout_id);
+        const display = active ? layoutDisplayState(active, status.renderer) : null;
         const streams = Object.values(status.renderer.streams ?? {});
         const live = streams.filter((item) => item.state === 'LIVE').length;
         const failed = streams.filter((item) => !['LIVE', 'CONNECTING'].includes(item.state)).length;
@@ -53,21 +58,21 @@ export async function dashboardPage() {
       <section class="dashboard-hero">
         <div class="hero-copy">
           <div class="eyeline"><span class="live-pulse ${displayHealthy ? '' : 'needs-attention'}"></span>${displayHealthy ? 'Display online' : 'Renderer attention needed'}</div>
-          <h2>${escapeHtml(active?.name ?? 'No layout active')}</h2>
-          <p>${active ? `${active.revision?.data.slots.length ?? 0} display slots · revision ${active.current_revision}` : 'Create a layout and apply it to the HDMI display.'}</p>
+          <h2>${escapeHtml(status.renderer.focused ? 'Camera focus active' : active?.name ?? 'No layout reported by renderer')}</h2>
+          <p>${display ? `${escapeHtml(active?.name)} · ${escapeHtml(display.label)}` : 'Open layouts to apply a saved wall, or check Renderer if the display is unavailable.'}</p>
           <div class="hero-actions">
             ${active ? `<a href="/layouts/${active.id}/edit" data-route class="button button-secondary">${icon('edit')} Edit active layout</a>` : `<a href="/layouts" data-route class="button button-secondary">${icon('plus')} Create layout</a>`}
             <a href="/remote" data-route class="button button-ghost">${icon('remote')} Remote control</a>
           </div>
         </div>
-        <div class="wall-preview">
-          ${active?.revision?.data.slots.slice(0, 8).map((slot) => {
+        <div class="wall-preview" aria-label="Saved layout illustration">
+          ${!status.renderer.focused && display?.kind === 'applied' ? active?.revision?.data.slots.slice(0, 8).map((slot) => {
             const camera = cameras.find((item) => item.id === (slot.selected_camera_id ?? slot.camera_id));
             const health = status.renderer.streams?.[slot.id];
             return `<div class="wall-preview-tile" style="left:${slot.x * 100}%;top:${slot.y * 100}%;width:${slot.width * 100}%;height:${slot.height * 100}%;z-index:${slot.z_index}">
               <span class="preview-noise"></span><strong>${escapeHtml(camera?.name ?? slot.label ?? slot.name)}</strong><i class="health-dot health-${(health?.state ?? 'CONNECTING').toLowerCase()}"></i>
             </div>`;
-        }).join('') ?? '<div class="wall-preview-empty">No active layout</div>'}
+        }).join('') : `<div class="wall-preview-empty">${status.renderer.focused ? 'A camera is focused. The saved wall returns when focus ends.' : display ? escapeHtml(display.detail) : 'Display layout unavailable'}</div>`}
         </div>
       </section>
       <section class="metric-strip">
@@ -142,6 +147,7 @@ export async function camerasPage() {
     const refresh = async () => {
         const cameras = await api('/cameras');
         root.innerHTML = `${pageHeader('Cameras', 'Save each RTSP camera once and reuse it everywhere', `<button class="button button-secondary" id="import-onvif">${icon('upload')} Import ONVIF</button><button class="button button-primary" id="add-camera">${icon('plus')} Add camera</button>`)}
+      ${reapplyHelp}
       <section class="panel table-panel">
         <div class="table-toolbar"><label class="search-field">${icon('search')}<input id="camera-filter" type="search" aria-label="Search cameras" placeholder="Search name, host, vendor, or tags" value="${escapeHtml(query)}" /></label><select class="select camera-status-filter" id="camera-status-filter" aria-label="Camera status filter">${['all', 'enabled', 'disabled'].map((value) => `<option value="${value}" ${cameraStatus === value ? 'selected' : ''}>${value === 'all' ? 'All cameras' : value[0].toUpperCase() + value.slice(1)}</option>`).join('')}</select><span id="camera-result-count" aria-live="polite"></span></div>
         ${cameras.length ? `<div class="data-table-wrap"><table class="data-table"><thead><tr><th>Camera</th><th>Location</th><th>Profiles</th><th>Tags</th><th>Status</th><th></th></tr></thead><tbody>${cameras.map((camera) => `
@@ -252,7 +258,7 @@ function cameraDialog(camera, refresh) {
                 delete payload.username;
             try {
                 await api(camera ? `/cameras/${camera.id}` : '/cameras', { method: camera ? 'PUT' : 'POST', body: JSON.stringify(payload) });
-                toast(camera ? 'Camera updated' : 'Camera added', 'success');
+                toast(camera ? 'Camera saved. Reapply its layout to load the updated settings.' : 'Camera added', 'success');
                 await refresh();
                 return true;
             }
@@ -317,14 +323,16 @@ export async function layoutsPage() {
     const root = content();
     root.innerHTML = pageHeader('Layouts', 'Reusable display arrangements with safe revision history', `<button class="button button-primary" id="create-layout">${icon('plus')} New layout</button>`) + skeleton(4);
     const refresh = async () => {
-        const [layouts, cameras] = await Promise.all([api('/layouts'), api('/cameras')]);
+        const [layouts, cameras, renderer] = await Promise.all([api('/layouts'), api('/cameras'), api('/renderer/status').catch(() => null)]);
         root.innerHTML = `${pageHeader('Layouts', 'Reusable display arrangements with safe revision history', `<button class="button button-primary" id="create-layout">${icon('plus')} New layout</button>`)}
+      <p class="display-notice">Save draft stores a revision. Apply sends the latest saved revision and camera settings to the renderer; stream health confirms playback separately. Reapply restarts streams and ends focus. Enabled schedules can replace a manually applied layout.</p>
       <div class="layout-list">${layouts.length ? layouts.map((layout) => {
             const slots = layout.revision?.data.slots ?? [];
-            return `<article class="layout-row ${layout.active ? 'is-active' : ''}">
+            const display = layoutDisplayState(layout, renderer);
+            return `<article class="layout-row ${display.kind === 'applied' ? 'is-active' : ''}" data-layout-id="${layout.id}" data-display-state="${display.kind}">
           <div class="mini-layout" style="background:${escapeHtml(layout.revision?.data.background ?? '#05080c')}">${slots.slice(0, 12).map((slot) => `<i style="left:${slot.x * 100}%;top:${slot.y * 100}%;width:${slot.width * 100}%;height:${slot.height * 100}%"></i>`).join('')}</div>
-          <div class="layout-row-main"><div class="layout-name-line"><h2>${escapeHtml(layout.name)}</h2>${layout.active ? badge('Active', 'good') : ''}</div><p>${escapeHtml(layout.description || 'No description')}</p><span>${slots.length} slots · revision ${layout.current_revision} · updated ${new Date(layout.updated_at).toLocaleString()}</span></div>
-          <div class="layout-row-actions"><button class="button button-ghost" data-layout-activate="${layout.id}" ${layout.active ? 'disabled' : ''}>${icon('play')} Apply</button><a class="button button-secondary" href="/layouts/${layout.id}/edit" data-route>${icon('edit')} Edit</a><button class="icon-button" data-layout-duplicate="${layout.id}" title="Duplicate layout" aria-label="Duplicate ${escapeHtml(layout.name)}">${icon('copy')}</button><button class="icon-button" data-layout-revisions="${layout.id}" title="Revision history">${icon('logs')}</button><button class="icon-button" data-layout-delete="${layout.id}" title="Delete" ${layout.active ? 'disabled' : ''}>${icon('trash')}</button></div>
+          <div class="layout-row-main"><div class="layout-name-line"><h2>${escapeHtml(layout.name)}</h2>${badge(display.label, display.tone)}</div><p>${escapeHtml(layout.description || 'No description')}</p><span>${slots.length} slots · saved revision ${layout.current_revision} · updated ${new Date(layout.updated_at).toLocaleString()}</span><p class="layout-display-detail">${escapeHtml(display.detail)}</p></div>
+          <div class="layout-row-actions"><button class="button button-ghost" data-layout-activate="${layout.id}">${icon('play')} ${display.action}</button><a class="button button-secondary" href="/layouts/${layout.id}/edit" data-route>${icon('edit')} Edit</a><button class="icon-button" data-layout-duplicate="${layout.id}" title="Duplicate layout" aria-label="Duplicate ${escapeHtml(layout.name)}">${icon('copy')}</button><button class="icon-button" data-layout-revisions="${layout.id}" title="Revision history">${icon('logs')}</button><button class="icon-button" data-layout-delete="${layout.id}" title="Delete" ${layout.active ? 'disabled' : ''}>${icon('trash')}</button></div>
         </article>`;
         }).join('') : emptyState('layout', 'No layouts yet', 'Create a visual layout, drag cameras into place, and apply it without rebooting.', `<button class="button button-primary" id="empty-create-layout">${icon('plus')} Create layout</button>`)}</div>`;
         const create = () => createLayoutDialog(cameras, refresh);
@@ -334,7 +342,7 @@ export async function layoutsPage() {
             button.disabled = true;
             try {
                 await api(`/layouts/${button.dataset.layoutActivate}/activate`, { method: 'POST' });
-                toast('Layout applied to display', 'success');
+                toast('Saved layout applied; check stream health for playback', 'success');
                 await refresh();
             }
             catch (error) {
@@ -438,11 +446,11 @@ export async function layoutEditorPage(layoutId) {
     const root = content();
     root.innerHTML = skeleton(6);
     try {
-        const [layout, cameras, groups] = await Promise.all([api(`/layouts/${layoutId}`), api('/cameras'), api('/rotation-groups')]);
+        const [layout, cameras, groups, renderer] = await Promise.all([api(`/layouts/${layoutId}`), api('/cameras'), api('/rotation-groups'), api('/renderer/status').catch(() => null)]);
         if (!root.isConnected)
             return;
         root.innerHTML = '';
-        activeEditor = new LayoutEditor(root, layout, cameras, groups);
+        activeEditor = new LayoutEditor(root, layout, cameras, groups, undefined, renderer);
         activeEditor.mount();
         document.body.classList.add('editor-mode');
     }
@@ -457,6 +465,7 @@ export async function rotationsPage() {
     const refresh = async () => {
         const [groups, cameras] = await Promise.all([api('/rotation-groups'), api('/cameras')]);
         root.innerHTML = `${pageHeader('Rotation groups', 'Rotate selected tiles independently while fixed cameras remain untouched', `<button class="button button-primary" id="add-rotation">${icon('plus')} New group</button>`)}<div class="rotation-grid">${groups.length ? groups.map((group) => `<article class="rotation-card"><div class="rotation-card-head"><span class="rotation-icon">${icon('rotate')}</span><div><h2>${escapeHtml(group.name)}</h2><p>Every ${group.interval_seconds} seconds · ${escapeHtml(group.order_mode)}</p></div>${badge(group.enabled ? 'Enabled' : 'Disabled', group.enabled ? 'good' : 'neutral')}</div><div class="rotation-camera-stack">${group.camera_entries.map((entry, index) => { const camera = cameras.find((item) => item.id === entry.camera_id); return `<span><i>${index + 1}</i>${escapeHtml(camera?.name ?? 'Missing camera')}</span>`; }).join('')}</div><dl class="compact-details"><div><dt>Preload</dt><dd>${escapeHtml(group.preconnect)}</dd></div><div><dt>Failure</dt><dd>${escapeHtml(group.failure_behavior === 'placeholder' ? 'hold (legacy placeholder setting)' : group.failure_behavior)}</dd></div></dl><div class="card-actions"><button class="button button-ghost" data-rotation-pause="${group.id}">${icon('pause')} Pause</button><button class="button button-ghost" data-rotation-resume="${group.id}">${icon('play')} Resume</button><button class="button button-secondary" data-rotation-edit="${group.id}">${icon('edit')} Edit</button><button class="icon-button" data-rotation-delete="${group.id}">${icon('trash')}</button></div></article>`).join('') : emptyState('rotate', 'No rotation groups', 'Create a group, choose cameras and an interval, then assign it to any layout tile.', `<button class="button button-primary" id="empty-add-rotation">${icon('plus')} Create group</button>`)}</div>`;
+        root.querySelector('.page-header')?.insertAdjacentHTML('afterend', reapplyHelp);
         const open = (group) => rotationDialog(group, cameras, refresh);
         root.querySelector('#add-rotation')?.addEventListener('click', () => open(null));
         root.querySelector('#empty-add-rotation')?.addEventListener('click', () => open(null));
@@ -527,7 +536,7 @@ function rotationDialog(group, cameras, refresh) {
             }
             const payload = { name, interval_seconds: Number(modal.querySelector('[name="interval"]').value), order_mode: modal.querySelector('[name="order"]').value, enabled: modal.querySelector('[name="enabled"]').checked, preconnect: modal.querySelector('[name="preconnect"]').value, failure_behavior: modal.querySelector('[name="failure"]').value, rotate_together_group: group?.rotate_together_group ?? null, start_position: startPosition, camera_entries: entries };
             await api(group ? `/rotation-groups/${group.id}` : '/rotation-groups', { method: group ? 'PUT' : 'POST', body: JSON.stringify(payload) });
-            toast('Rotation group saved', 'success');
+            toast('Rotation group saved. Reapply its layout to load all settings.', 'success');
             await refresh();
             return true;
         },
@@ -547,39 +556,7 @@ export async function schedulesPage() {
 }
 export async function displayPage() {
     cleanEditor();
-    const root = content();
-    root.innerHTML = pageHeader('Display', 'Detected HDMI outputs and reusable resolution profiles', `<button class="button button-primary" id="add-display-profile">${icon('plus')} New profile</button>`) + skeleton(4);
-    const refresh = async () => {
-        const [outputs, profiles, renderer] = await Promise.all([api('/display/outputs'), api('/display/profiles'), api('/renderer/status')]);
-        root.innerHTML = `${pageHeader('Display', 'Detected HDMI outputs and reusable resolution profiles', `<button class="button button-primary" id="add-display-profile">${icon('plus')} New profile</button>`)}<section class="output-strip">${outputs.length ? outputs.map((output) => `<article><span class="display-icon">${icon('display')}</span><div><strong>${escapeHtml(output.name)}</strong><small>${escapeHtml(output.preferred_mode ?? 'No mode reported')} · ${escapeHtml(output.status)}</small></div>${badge(output.status, output.status === 'connected' ? 'good' : 'warn')}</article>`).join('') : `<article><span class="display-icon">${icon('display')}</span><div><strong>${renderer.backend === 'omxplayer' ? 'Legacy HDMI overlay' : renderer.state === 'RUNNING' && !String(renderer.sink ?? '').includes('kms') ? 'Display managed by renderer' : 'No DRM connector detected'}</strong><small>${renderer.backend === 'omxplayer' ? 'OMXPlayer uses VideoCore HDMI overlays; /dev/dri is not required.' : renderer.state === 'RUNNING' && !String(renderer.sink ?? '').includes('kms') ? `Active ${escapeHtml(renderer.sink ?? 'display sink')}; DRM connector detection is not used.` : 'For a KMS sink, check HDMI connection and video/render group access to /dev/dri.'}</small></div>${badge(renderer.state === 'RUNNING' ? 'Active' : 'Unavailable', renderer.state === 'RUNNING' ? 'good' : 'warn')}</article>`}</section><section class="panel table-panel"><div class="panel-header"><div><h2>Display profiles</h2><p>Associate layouts with output dimensions without changing normalized tile geometry.</p></div></div>${profiles.length ? `<table class="data-table"><thead><tr><th>Name</th><th>Output</th><th>Resolution</th><th>Refresh</th><th>Rotation</th><th></th></tr></thead><tbody>${profiles.map((profile) => `<tr><td><strong>${escapeHtml(profile.name)}</strong></td><td>${escapeHtml(profile.output_name ?? 'Any')}</td><td>${profile.width} × ${profile.height}</td><td>${profile.refresh_rate} Hz</td><td>${profile.rotation}°</td><td><button class="icon-button" data-display-delete="${profile.id}">${icon('trash')}</button></td></tr>`).join('')}</tbody></table>` : emptyState('display', 'No display profiles', 'Create a profile for the connected HDMI monitor.')}</section>`;
-        root.querySelector('#add-display-profile')?.addEventListener('click', () => displayProfileDialog(outputs.map((item) => item.name), refresh));
-        root.querySelectorAll('[data-display-delete]').forEach((button) => button.addEventListener('click', async () => { if (!confirm('Delete this display profile?'))
-            return; try {
-            await api(`/display/profiles/${button.dataset.displayDelete}`, { method: 'DELETE' });
-            await refresh();
-        }
-        catch (error) {
-            toast(errorMessage(error), 'error');
-        } }));
-    };
-    try {
-        await refresh();
-    }
-    catch (error) {
-        root.innerHTML += emptyState('offline', 'Unable to load display settings', errorMessage(error));
-    }
-}
-function displayProfileDialog(outputs, refresh) {
-    openDialog({ title: 'New display profile', body: `<div class="form-grid two"><label><span>Name</span><input class="input" name="name" value="HDMI 1080p" /></label><label><span>Output</span><select class="select" name="output"><option value="">Any output</option>${outputs.map((item) => `<option>${escapeHtml(item)}</option>`).join('')}</select></label><label><span>Width</span><input class="input" type="number" name="width" value="1920" /></label><label><span>Height</span><input class="input" type="number" name="height" value="1080" /></label><label><span>Refresh rate</span><input class="input" type="number" name="refresh" value="60" /></label><label><span>Rotation</span><select class="select" name="rotation"><option>0</option><option>90</option><option>180</option><option>270</option></select></label><label class="checkbox-row span-two"><input type="checkbox" name="blanking" checked /><span>Prevent display blanking</span></label></div>`, submitLabel: 'Create profile', onSubmit: async (dialog) => { const get = (name) => (dialog.querySelector(`[name="${name}"]`)).value; try {
-            await api('/display/profiles', { method: 'POST', body: JSON.stringify({ name: get('name'), output_name: get('output') || null, width: Number(get('width')), height: Number(get('height')), refresh_rate: Number(get('refresh')), rotation: Number(get('rotation')), prevent_blanking: dialog.querySelector('[name="blanking"]').checked }) });
-            toast('Display profile created', 'success');
-            await refresh();
-            return true;
-        }
-        catch (error) {
-            toast(errorMessage(error), 'error');
-            return false;
-        } } });
+    await renderDisplay(content());
 }
 export async function rendererPage() {
     cleanEditor();
@@ -588,6 +565,7 @@ export async function rendererPage() {
     try {
         const [status, backends, rendererConfig] = await Promise.all([api('/renderer/status'), api('/renderer/backends'), api('/renderer/config')]);
         root.innerHTML = `${pageHeader('Renderer & performance', 'Pipeline capabilities, stream recovery, and safe synthetic benchmarking', `<button class="button button-primary" id="run-benchmark">${icon('gauge')} Run benchmark</button>`)}<div class="renderer-overview"><section class="panel"><div class="panel-header"><div><h2>Active renderer</h2><p>Managed output with independent camera streams.</p></div>${badge(status.state, status.state === 'RUNNING' ? 'good' : 'bad')}</div><dl class="detail-list"><div><dt>Backend</dt><dd>${escapeHtml(status.backend ?? 'Unavailable')}</dd></div><div><dt>Sink</dt><dd>${escapeHtml(status.sink ?? '—')}</dd></div><div><dt>Output</dt><dd>${status.output ? `${status.output.width} × ${status.output.height}` : '—'}</dd></div><div><dt>Uptime</dt><dd>${formatDuration(status.uptime_seconds ?? 0)}</dd></div><div><dt>Active streams</dt><dd>${Object.keys(status.streams ?? {}).length}</dd></div></dl></section><section class="panel"><div class="panel-header"><div><h2>Backend availability</h2><p>Players available on this device.</p></div></div><div class="backend-list">${backends.map((backend) => `<div><span class="backend-icon">${icon('gauge')}</span><span><strong>${escapeHtml(backend.name)}</strong><small>${escapeHtml(backend.reason ?? (backend.available ? 'Ready' : 'Unavailable'))}</small></span>${badge(backend.available ? 'Available' : 'Unavailable', backend.available ? 'good' : 'neutral')}</div>`).join('')}</div></section></div><section class="panel"><div class="panel-header"><div><h2>Per-stream state</h2><p>Restarts are recovery or manual actions; switches are planned camera changes. Counts reset when the renderer starts.</p></div></div><div class="health-list">${Object.values(status.streams ?? {}).map((stream) => `<div class="health-row"><span class="camera-avatar">${icon('camera')}</span><div><strong>${escapeHtml(stream.slot_id)}</strong><small>${escapeHtml(stream.detail ?? `${stream.decoded_frames} frames decoded`)}</small></div>${badge(stream.state, stream.state === 'LIVE' ? 'good' : ['CONNECTING', 'RECONNECTING'].includes(stream.state) ? 'warn' : 'bad')}${streamCounts(stream)}<button class="icon-button" data-restart-slot="${stream.slot_id}">${icon('refresh')}</button></div>`).join('') || emptyState('camera', 'No streams', 'Apply a layout to create renderer branches.')}</div></section><section class="panel benchmark-panel" id="benchmark-result"><div><h2>Synthetic compositor benchmark</h2><p>Uses local generated video sources. It never contacts or changes cameras.</p></div><div class="benchmark-placeholder">No benchmark run in this session.</div></section>`;
+        root.querySelector('.renderer-overview')?.insertAdjacentHTML('afterend', `<section class="panel capability-panel"><div class="panel-header"><div><h2>Implemented display features</h2><p>Feature support is separate from player availability. Saved compatibility settings can exist even when playback does not implement them.</p></div></div><div class="data-table-wrap"><table class="data-table capability-table"><thead><tr><th>Feature</th>${backends.map((backend) => `<th>${escapeHtml(backend.name)}${status.backend === backend.name ? ' · current' : ''}</th>`).join('')}</tr></thead><tbody>${rendererFeatures.map((feature) => `<tr><th scope="row">${feature.label}</th>${backends.map((backend) => `<td>${badge(featureDescription(backend, feature.key), featureSupport(backend, feature.key) === true ? 'good' : 'neutral')}</td>`).join('')}</tr>`).join('')}</tbody></table></div>${backends.filter((backend) => backend.limitations?.length).map((backend) => `<div class="capability-limitations"><h3>${escapeHtml(backend.name)} limitations</h3><ul>${backend.limitations.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul></div>`).join('')}</section>`);
         const backendLabels = { auto: 'Automatic', omxplayer: 'OMXPlayer (legacy Pi)', gstreamer: 'GStreamer (modern)' };
         root.querySelector('.renderer-overview')?.insertAdjacentHTML('beforeend', `<section class="panel"><div class="panel-header"><div><h2>Display player</h2><p>Choose the player used for HDMI output.</p></div></div><label class="backend-setting"><span>Selected player</span><select class="select" id="renderer-backend-choice" ${rendererConfig.can_change ? '' : 'disabled'}>${rendererConfig.options.map((option) => `<option value="${escapeHtml(option.name)}" ${option.name === rendererConfig.selected ? 'selected' : ''} ${!option.available ? 'disabled' : ''}>${escapeHtml(backendLabels[option.name] ?? option.name)}${option.available ? '' : ' — unavailable'}</option>`).join('')}</select></label><p class="form-help">Changing the player restarts the display and restores the active layout.</p></section>`);
         root.querySelector('#renderer-backend-choice')?.addEventListener('change', async (event) => {
@@ -596,7 +574,8 @@ export async function rendererPage() {
             try {
                 const result = await api('/renderer/config', { method: 'PUT', body: JSON.stringify({ renderer_backend: select.value }) });
                 toast(result.restart_requested ? 'Display player is restarting' : 'Display player setting saved', 'success');
-                window.setTimeout(() => void rendererPage(), 12000);
+                window.setTimeout(() => { if (location.pathname === '/renderer' && root.isConnected)
+                    void rendererPage(); }, 12000);
             }
             catch (error) {
                 select.value = rendererConfig.selected;
@@ -665,53 +644,7 @@ export async function logsPage() {
 }
 export async function backupPage() {
     cleanEditor();
-    const root = content();
-    root.innerHTML = `${pageHeader('Backup & restore', 'Portable configuration exports, encrypted credential backups, and safe imports')}<div class="backup-grid"><section class="panel backup-card"><span class="large-icon">${icon('download')}</span><h2>Sanitized export</h2><p>Download cameras, layouts, schedules, and settings without saved passwords.</p><button class="button button-primary" id="export-config">Download JSON</button></section><section class="panel backup-card"><span class="large-icon">${icon('lock')}</span><h2>Complete encrypted backup</h2><p>Includes camera credentials inside an AES-GCM encrypted archive protected by your passphrase.</p><button class="button button-secondary" id="encrypted-backup">Create encrypted backup</button></section><section class="panel backup-card"><span class="large-icon">${icon('upload')}</span><h2>Restore or merge</h2><p>Validate a Mosaivue backup before importing it. Existing data is preserved in merge mode.</p><button class="button button-ghost" id="restore-backup">Choose backup</button><input type="file" id="restore-file" hidden accept=".zip,.cwbackup" /></section></div>`;
-    root.querySelector('#export-config')?.addEventListener('click', () => void download('/backup/export', 'mosaivue-export.json'));
-    root.querySelector('#encrypted-backup')?.addEventListener('click', () => { openDialog({ title: 'Encrypt complete backup', body: '<label><span>Passphrase</span><input class="input" type="password" name="passphrase" minlength="12" autocomplete="new-password" /></label><p class="form-help">Mosaivue cannot recover a lost backup passphrase.</p>', submitLabel: 'Create backup', onSubmit: async (dialog) => { const passphrase = dialog.querySelector('[name="passphrase"]').value; if (passphrase.length < 12) {
-            toast('Use at least 12 characters', 'warning');
-            return false;
-        } try {
-            await download('/backup/create', 'mosaivue-backup.cwbackup', { method: 'POST', body: JSON.stringify({ include_credentials: true, passphrase }) });
-            toast('Encrypted backup created', 'success');
-            return true;
-        }
-        catch (error) {
-            toast(errorMessage(error), 'error');
-            return false;
-        } } }); });
-    const fileInput = root.querySelector('#restore-file');
-    root.querySelector('#restore-backup')?.addEventListener('click', () => fileInput.click());
-    fileInput.addEventListener('change', () => {
-        const file = fileInput.files?.[0];
-        if (!file)
-            return;
-        fileInput.value = '';
-        openDialog({ title: 'Restore configuration', body: `<p>Selected: <strong>${escapeHtml(file.name)}</strong></p><label><span>Passphrase, if encrypted</span><input class="input" type="password" name="passphrase" /></label><label class="checkbox-row"><input type="checkbox" name="merge" checked /><span>Merge with existing configuration</span></label>`, submitLabel: 'Validate and restore', onSubmit: async (dialog) => {
-                const data = new FormData();
-                data.append('file', file);
-                data.append('passphrase', dialog.querySelector('[name="passphrase"]').value);
-                data.append('merge', String(dialog.querySelector('[name="merge"]').checked));
-                try {
-                    const result = await api('/backup/restore', { method: 'POST', body: data });
-                    const count = Object.values(result.imported).reduce((a, b) => a + b, 0);
-                    const warning = result.renderer_warning || (result.renderer_applied === false ? 'Configuration was restored, but the display has not applied it. Restart the renderer or apply a layout.' : null);
-                    toast(`Restored ${count} objects${warning ? ' · display needs attention' : ''}`, warning ? 'warning' : 'success');
-                    root.querySelector('#restore-result')?.remove();
-                    const message = document.createElement('section');
-                    message.id = 'restore-result';
-                    message.className = 'panel restore-result';
-                    message.setAttribute('role', 'status');
-                    message.innerHTML = `<h2>${warning ? 'Configuration restored; display needs attention' : 'Configuration restored'}</h2><p>${count} objects restored.</p>${warning ? `<p>${escapeHtml(warning)}</p><a class="button button-secondary" href="/renderer" data-route>Open renderer</a>` : ''}`;
-                    root.append(message);
-                    return true;
-                }
-                catch (error) {
-                    toast(errorMessage(error), 'error');
-                    return false;
-                }
-            } });
-    });
+    await renderBackup(content());
 }
 export async function aboutPage() {
     cleanEditor();
@@ -731,30 +664,29 @@ export async function remotePage() {
     root.innerHTML = pageHeader('Display remote', 'Fast layout and camera controls for a phone or tablet') + skeleton(4);
     try {
         const [layouts, cameras, status] = await Promise.all([api('/layouts'), api('/cameras'), api('/renderer/status')]);
-        root.innerHTML = `<div class="remote-shell"><header><div><img class="brand-mark small" src="/brand/mosaivue-icon.png" alt="" /><span><strong>Mosaivue remote</strong><small>${status.state}</small></span></div><a href="/" data-route class="icon-button">${icon('close')}</a></header><section><h1>Layouts</h1><div class="remote-layouts">${layouts.map((layout) => `<button data-remote-layout="${layout.id}" class="${layout.active ? 'is-active' : ''}"><span class="mini-layout">${(layout.revision?.data.slots ?? []).slice(0, 8).map((slot) => `<i style="left:${slot.x * 100}%;top:${slot.y * 100}%;width:${slot.width * 100}%;height:${slot.height * 100}%"></i>`).join('')}</span><strong>${escapeHtml(layout.name)}</strong>${layout.active ? '<small>On display</small>' : '<small>Tap to apply</small>'}</button>`).join('')}</div></section><section><div class="remote-section-head"><h1>Focus camera</h1><button class="button button-ghost" id="restore-layout">Restore layout</button></div><div class="remote-cameras">${cameras.filter((camera) => camera.enabled).map((camera) => `<button data-focus-camera="${camera.id}"><span>${icon('camera')}</span><strong>${escapeHtml(camera.name)}</strong><small>${escapeHtml(camera.location ?? '')}</small></button>`).join('')}</div></section></div>`;
-        root.querySelectorAll('[data-remote-layout]').forEach((button) => button.addEventListener('click', async () => { try {
-            await api(`/layouts/${button.dataset.remoteLayout}/activate`, { method: 'POST' });
-            toast('Layout applied', 'success');
-            if (root.isConnected)
-                await remotePage();
-        }
-        catch (error) {
-            toast(errorMessage(error), 'error');
-        } }));
-        root.querySelectorAll('[data-focus-camera]').forEach((button) => button.addEventListener('click', async () => { try {
-            await api('/renderer/focus', { method: 'POST', body: JSON.stringify({ camera_id: button.dataset.focusCamera, aspect_mode: 'cover' }) });
-            toast('Camera focused on display', 'success');
-        }
-        catch (error) {
-            toast(errorMessage(error), 'error');
-        } }));
-        root.querySelector('#restore-layout')?.addEventListener('click', async () => { try {
-            await api('/renderer/restore', { method: 'POST' });
-            toast('Layout restored', 'success');
-        }
-        catch (error) {
-            toast(errorMessage(error), 'error');
-        } });
+        root.innerHTML = `<div class="remote-shell"><header><div><img class="brand-mark small" src="/brand/mosaivue-icon.png" alt="" /><span><strong>Mosaivue remote</strong><small>${escapeHtml(status.state)}${status.focused ? ' · camera focus active' : ''}</small></span></div><a href="/" data-route class="icon-button" aria-label="Back to dashboard">${icon('close')}</a></header>
+      <section><h1>Layouts</h1><p class="display-notice">Apply uses the latest saved revision and ends focus. Reapply reloads saved camera settings. Enabled schedules can replace a manually applied wall.</p><div class="remote-layouts">${layouts.map((layout) => {
+            const display = layoutDisplayState(layout, status);
+            return `<button data-remote-layout="${layout.id}" data-display-state="${display.kind}" class="${display.kind === 'applied' ? 'is-active' : ''}"><span class="mini-layout">${(layout.revision?.data.slots ?? []).slice(0, 8).map((slot) => `<i style="left:${slot.x * 100}%;top:${slot.y * 100}%;width:${slot.width * 100}%;height:${slot.height * 100}%"></i>`).join('')}</span><strong>${escapeHtml(layout.name)}</strong><small>${escapeHtml(display.label)} · ${display.action}</small></button>`;
+        }).join('')}</div></section>
+      <section><div class="remote-section-head"><h1>Focus camera</h1><button class="button button-ghost" id="restore-layout" ${status.focused ? '' : 'disabled'}>Restore previous wall</button></div><p class="form-help">Restore previous wall returns to the revision used before focus. Apply a layout above to use its latest saved revision.</p><div class="remote-cameras">${cameras.filter((camera) => camera.enabled).map((camera) => `<button data-focus-camera="${camera.id}"><span>${icon('camera')}</span><strong>${escapeHtml(camera.name)}</strong><small>${escapeHtml(camera.location ?? '')}</small></button>`).join('')}</div></section></div>`;
+        const run = async (button, path, body, message) => {
+            button.disabled = true;
+            try {
+                await api(path, { method: 'POST', ...(body ? { body: JSON.stringify(body) } : {}) });
+                toast(message, 'success');
+                if (root.isConnected)
+                    await remotePage();
+            }
+            catch (error) {
+                toast(errorMessage(error), 'error');
+                button.disabled = false;
+            }
+        };
+        root.querySelectorAll('[data-remote-layout]').forEach((button) => button.addEventListener('click', () => void run(button, `/layouts/${button.dataset.remoteLayout}/activate`, undefined, 'Saved layout applied; check stream health for playback')));
+        root.querySelectorAll('[data-focus-camera]').forEach((button) => button.addEventListener('click', () => void run(button, '/renderer/focus', { camera_id: button.dataset.focusCamera, aspect_mode: 'cover' }, 'Camera focus applied')));
+        const restore = root.querySelector('#restore-layout');
+        restore.addEventListener('click', () => void run(restore, '/renderer/restore', undefined, 'Previous wall restored'));
     }
     catch (error) {
         root.innerHTML += emptyState('offline', 'Remote unavailable', errorMessage(error));

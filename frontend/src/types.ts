@@ -146,6 +146,16 @@ export type StreamHealth = {
   dropped_frames: number;
 };
 
+export type RendererFeature = 'labels' | 'manual_crop' | 'opacity' | 'z_order' | 'audio' | 'native_size' | 'portrait' | 'multiple_outputs' | 'background' | 'borders' | 'output_selection' | 'refresh_rate' | 'prevent_blanking';
+
+export type RendererCapabilities = {
+  name: string;
+  available: boolean;
+  reason?: string | null;
+  feature_support?: Partial<Record<RendererFeature, boolean>>;
+  limitations?: string[];
+};
+
 export type RendererStatus = {
   backend?: string;
   state: string;
@@ -156,8 +166,11 @@ export type RendererStatus = {
   active_layout_id?: string | null;
   active_revision?: number | null;
   focused?: boolean;
+  capabilities?: RendererCapabilities;
   error?: string;
 };
+
+export type LayoutApplyResult = { layout: Layout; renderer: RendererStatus };
 
 export type RendererConfig = {
   selected: 'auto' | 'gstreamer' | 'omxplayer';

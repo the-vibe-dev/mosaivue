@@ -27,6 +27,9 @@ REQUIRED = [
     "scripts/test-installer-rotation.sh",
     "scripts/test-installer-paths.sh",
     "scripts/copy_release_source.py",
+    "scripts/relocate_venv.py",
+    "scripts/bullseye_wheel_plan.py",
+    "installer/bullseye-wheels.json",
     "uninstall.sh",
     "systemd/mosaivue-server.service",
     "systemd/mosaivue-renderer.service",
@@ -80,6 +83,11 @@ def main() -> int:
     frontend_version = json.loads((ROOT / "frontend/package.json").read_text())["version"]
     if frontend_version != re.sub(r"b(\d+)$", r"-beta.\1", project_version):
         errors.append("Frontend and Python beta versions differ")
+    for html_path in (ROOT / "frontend/index.html", ROOT / "src/mosaivue/static/index.html"):
+        if html_path.exists():
+            cache_versions = set(re.findall(r'\?v=([^"\s]+)', html_path.read_text()))
+            if cache_versions != {project_version}:
+                errors.append(f"Asset cache versions differ from package version: {html_path.relative_to(ROOT)}")
     for private_path in (".pi", ".env", "rollout", "mosaivue.db"):
         if (ROOT / private_path).exists():
             errors.append(f"private runtime artifact in release tree: {private_path}")

@@ -1,40 +1,26 @@
-# Build verification: 0.1.0b3 review candidate
+# Build verification: 0.1.0b4 review candidate
 
-The supplied candidate was reviewed and packaged on November 13, 2026 (UTC). It is an unpublished review build. The first section records the archive review; the local integration results follow.
+Reviewed November 13, 2026 from the newly uploaded b3 archive. This candidate is unpublished and has not been deployed by this review. No database migration was added.
 
-## Supplied review results
+- Python: **358 passed, 3 explicit environment/privilege skips**, one existing upstream warning. Browser tests excluded.
+- Combined statement/branch coverage: **62.44%**, versus **59.50%** on this uploaded b3 baseline.
+- Frontend: strict TypeScript/build passed, **35 JavaScript tests passed**, 36 compiled static files synchronized.
+- Ruff, byte compilation, 13 shell syntax checks and both nonprivileged installer helper suites passed. Installer focused suite:21 passed/1 root-rsync skip, included in the Python total.
+- Runtime Python advisory lookup:37 distributions, no known advisories returned. Bandit:46 low patterns,0 high/medium; triage retained, including an implemented installed-helper ownership correction.
+- Source, wheel and amd64 Debian builds with checksums and package smoke evidence are included in the handoff. A build is not a privileged installation pass.
+- Browser rendering, real AF_UNIX integration, privileged ownership/install/rollback, ARM binaries and changed b4 camera/physical output remain unqualified here.
 
-- Python suite excluding browser tests: **245 passed, one environment skip**, one upstream deprecation warning.
-- Combined Python statement/branch coverage: **59.39%**, up from 47.58% on the supplied archive.
-- Strict TypeScript, frontend build, source/test/script Ruff checks, byte compilation and installer helper checks passed. Final JavaScript test count and distribution checks are recorded with the delivery evidence.
-- Updated wheel, source archive and amd64 Debian package are included in the review bundle. A built package is not a verified root installation.
-- Real Unix-socket integration is blocked by this environment; the corresponding test is retained with an explicit environment skip.
-- Chromium could not start in the review environment because Unix-socket creation was prohibited. Browser interaction checks were unverified there.
-- No camera, physical display, hardware decoder, clean target installation or long-duration appliance qualification was performed for this candidate.
-
-See [the complete validation record](docs/review/validation.md), [the review report](docs/review/report.md), and [upgrade instructions](docs/review/upgrade.md). The handoff bundle includes test/build logs, package checksums, an issue register and the original-to-candidate patch.
+Read [current validation](docs/review/current-validation.md), [the report](docs/review/current-report.md), and [upgrade guidance](docs/review/current-upgrade.md). The exact supplied b3 verification file is preserved at [supplied b3 evidence](docs/review/supplied-b3-build-verification.md), including external browser success and Pi rollback/upgrade/reboot observations, incomplete Ubuntu HDMI, unreachable ROCK Pi and no completed supplied soak. Those results are not reclassified as b4 passes.
 
 ## Local integration after handoff
 
-The reviewed source was applied to the Mosaivue repository on November 13, 2026. The archive's 303-file checksum manifest passed, and the applied patch matched its complete source tree byte for byte before one additional camera credential fix.
+The 328-file bundle manifest passed and its patch applied to the committed b3 tree. The patched tree matched the delivered b4 source byte for byte before local test and documentation corrections.
 
-- Python: **247 passed**, one upstream Starlette/httpx deprecation warning (`pytest -q --ignore=tests/e2e`).
-- JavaScript: **20 passed** after rebuilding `frontend/dist`; TypeScript, frontend build, Ruff, byte compilation, release check and both installer helper suites passed. The rebuilt frontend assets match `src/mosaivue/static`.
-- Browser: **5 passed** against an isolated local test-backend server with seeded demo cameras and Chromium. Desktop dashboard and mobile schedules rendered; the tested navigation produced no page errors. This qualifies those control workflows only, not video playback.
-- The browser run found that editing a camera without credentials could create an encrypted empty password. The camera service now ignores a null-only credential edit and reports an empty password accurately. A focused unit regression and the camera-edit browser workflow pass.
+- Python: **359 passed, 2 environment/privilege skips**, one upstream Starlette/httpx warning. This host permits the Unix-socket case skipped in the review environment.
+- Frontend: **35 JavaScript tests**, strict TypeScript, build, static-asset synchronization, Ruff, compilation, installer helper checks and release check passed.
+- Browser: **8 workflows passed** against a disposable seeded local server. The test fixture now reuses an authenticated context so setup plus browser tests do not exceed the production login rate limit. Desktop dashboard and mobile layout controls rendered and responded. One expected pre-login `/auth/me` 401 appeared in the console; no page exception was observed.
+- A mobile stacking defect discovered during visual inspection was corrected: the selected canvas tile no longer covers the inspector drawer. The browser suite includes a hit-test regression for the overlap.
+- Source tarball and amd64 Debian package builds succeeded from the integrated tree; both generated SHA-256 manifests verified. No privileged install was attempted.
+- PTZ is **not implemented in b4** and no PTZ camera is available for physical protocol testing. Keep PTZ and presets out of supported-feature claims until implementation and vendor-camera acceptance are complete.
 
-At the time of that local integration check, no Pi, ROCK Pi, Ubuntu HDMI, real decoder, privileged install/rollback or long-duration soak had been run for this integrated candidate.
-
-## Appliance qualification started November 13, 2026
-
-The source archive built from commit `6b206cd` was verified by SHA-256 on each installed device before use. It contains the reviewed b3 changes plus the camera credential fix and Bullseye installer corrections.
-
-- **Pi 3B+ / 32-bit Bullseye / OMXPlayer:** An upgrade from 0.1.0b1 exposed two incompatible piwheels native binaries. The installer restored the previous release after each failed attempt; the old wall returned to 7/7 LIVE and HTTP health passed. The corrected installer selects checksum-pinned upstream ARMv7 `cryptography` and `pydantic-core` wheels and imports the web and renderer entry points before stopping services. The subsequent privileged upgrade completed. Initial b3 checks showed 7/7 LIVE, 19 rotation switches, zero restarts, both services active and HTTP health passing. A controlled reboot returned Wi-Fi at the same address with rfkill units masked and the b3 wall back at 7/7 LIVE. A new 24-hour observer began after the reboot at 2026-11-13 15:13 UTC; no completed soak result is claimed yet.
-- **Ubuntu GPU VM / GStreamer:** The final source commit installed successfully with rollback snapshots retained. The VM's address changed after its host move. One legacy camera hostname failed DNS; its endpoint was changed to the same reachable UniFi host used by the other cameras, and its probe succeeded. A real camera using NVIDIA decoding and a headless sink stayed LIVE and advanced from 88 to 568 frames in 25 seconds. The passed-through NVIDIA GPU still reports its physical HDMI/DP connectors disconnected; the full X11 wall remained unstable. Its renderer was paused to avoid unnecessary camera retries, while the web service stayed active. A bounded HDMI watcher will refresh X11, start the renderer, and begin a separate 24-hour physical observation only after 7/7 streams advance. Physical HDMI qualification has not started.
-- **ROCK Pi:** The former `.180` gateway and the ROCK Pi are unreachable from the test network. No b3 install or soak has started there.
-
-The Pi 3 privileged installer and rollback behavior now has direct appliance evidence. The Ubuntu physical display, ROCK Pi installation, and 24-hour results remain pending.
-
-## Historical site evidence
-
-The detailed Pi, ROCK Pi and Ubuntu site observations supplied in this file with 0.1.0b2 are preserved verbatim under a context notice in [historical-build-verification.md](docs/review/historical-build-verification.md). They were not repeated here and do not qualify modified 0.1.0b3 code.
+No b4 build has been installed on the Pi 3, Ubuntu VM or ROCK Pi. Their b3 observation remains separate from this candidate's software checks.

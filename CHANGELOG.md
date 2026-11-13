@@ -2,6 +2,34 @@
 
 All notable changes follow a Keep a Changelog-style format. Version numbers use semantic versioning after the first stable release.
 
+## [0.1.0b4] - 2026-11-13 - follow-up review candidate
+
+Built from the newly supplied b3 archive. No database migration was added. Python/source version is `0.1.0b4`; frontend is `0.1.0-beta.4`; Debian is `0.1.0~b4`. This candidate has not been deployed or published by this review. Supplied b3 integration/appliance evidence is retained unchanged in `docs/review/supplied-b3-build-verification.md`.
+
+### Added and improved
+
+- Typed compatible settings and per-process preview/probe concurrency, duplicate coalescing, retryable saturation and bounded short JPEG caching.
+- Renderer feature/limitation reporting and matching UI capability matrix; unsupported physical controls are disabled while existing metadata is preserved.
+- Saved/applied/focused/unknown layout states, explicit Reapply, and save-success/apply-failure recovery without duplicate revisions.
+- JSON configuration reimport, concrete layout validation errors, fixed-pixel conversion guidance and accessible mobile editor drawer controls.
+- Current review, competitor research, prioritized findings, acceptance checklist and updated operating documentation.
+
+### Fixed
+
+- The phone-sized Tile inspector now stacks above selected canvas tiles, so its controls remain usable.
+- Manual Previous/Next prepares the actual requested standby and preserves the current source/cursor on readiness failure.
+- OMX spawn failures no longer kill shared recovery; scheduler/rotation database failures retry; essential daemon tasks are supervised.
+- Long renderer mutations have a separate response budget; capability/settings JSON replacement is atomic.
+- Restored layouts whose current revision is older than saved drafts allocate the next unused revision.
+- Installed releases use explicit root ownership, protected ancestors and safe release-directory entries, removing lingering source-owner authority over privileged helpers.
+- Editable virtual environments survive staging rename; Bullseye wheels follow the selected CPython ABI; IPv6/local proxy health checks use the intended local endpoint.
+- Documentation distinguishes encrypted passwords from visible usernames and opaque URI-token risks, and separates accepted revisions from verified physical playback.
+
+### Evidence and open work
+
+- Current Python suite: 358 passed, three environment/privilege skips; JavaScript: 35 passed. Current combined statement/branch coverage is 62.44% versus 59.50% on the uploaded archive.
+- Browser interaction and b4 physical/privileged installation acceptance remain unexecuted here. See [current validation](docs/review/current-validation.md) for exact scope and [the roadmap](ROADMAP.md) for unresolved capability and architecture gaps.
+
 ## [0.1.0b3] - 2026-11-13 — review candidate
 
 This is a locally delivered review candidate. It has not been published automatically or qualified as a new hardware release. No database schema migration was added by this review. Python/source version is `0.1.0b3`; Debian prerelease version is `0.1.0~b3`.

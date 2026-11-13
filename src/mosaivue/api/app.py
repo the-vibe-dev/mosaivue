@@ -22,6 +22,7 @@ from ..renderer.rpc import RendererRPCClient
 from ..security import KeyManager, generate_setup_token
 from ..services.capabilities import write_capabilities
 from ..services.event_stream import authenticated_events, event_session_valid
+from ..services.stream_work import StreamWorkPool
 from ..version import __version__
 from .dependencies import AuthContext, require_auth
 from .routes_auth import router as auth_router
@@ -53,6 +54,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         LOGGER.warning("Initial setup is required; the one-time token is stored at %s", SETUP_TOKEN_PATH)
     app.state.events = EventBus()
     app.state.renderer = RendererRPCClient()
+    app.state.stream_work = StreamWorkPool(
+        concurrency=settings.preview_concurrency,
+        cache_ttl_seconds=settings.preview_cache_ttl_seconds,
+    )
 
     async def refresh_capabilities() -> None:
         try:
@@ -66,6 +71,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        await app.state.stream_work.close()
         refresh_task.cancel()
         with suppress(asyncio.CancelledError):
             await refresh_task

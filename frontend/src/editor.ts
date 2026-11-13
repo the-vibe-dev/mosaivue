@@ -1,9 +1,10 @@
 import { api } from './api.js';
+import { featureSupport, layoutDisplayState } from './display-state.js';
 import { newId } from './ids.js';
 import { setGeometry } from './forms.js';
 import { setNavigationGuard } from './router.js';
 import { gridGeometry, templateGeometry } from './templates.js';
-import type { Camera, Layout, LayoutData, RotationGroup, Slot } from './types.js';
+import type { Camera, Layout, LayoutApplyResult, LayoutData, RendererStatus, RotationGroup, Slot } from './types.js';
 import { escapeHtml, icon, toast } from './ui.js';
 
 function cloneData<T>(value: T): T {
@@ -63,6 +64,8 @@ export class LayoutEditor {
   private savedData = '';
   private busy = false;
   private destroyed = false;
+  private saveError = '';
+  private mobilePane: 'library' | 'inspector' | null = null;
   private beforeUnloadHandler = (event: BeforeUnloadEvent): void => {
     if (!this.isDirty()) return;
     event.preventDefault();
@@ -75,6 +78,7 @@ export class LayoutEditor {
     private cameras: Camera[],
     private groups: RotationGroup[],
     private onSaved?: (layout: Layout) => void,
+    private rendererStatus?: RendererStatus | null,
   ) {
     this.data = cloneData(layout.revision?.data ?? {
       schema_version: 1,
@@ -111,12 +115,17 @@ export class LayoutEditor {
     const outputWidth = this.data.output_width ?? 1920;
     const outputHeight = this.data.output_height ?? 1080;
     const ratio = `${outputWidth} / ${outputHeight}`;
+    const display = layoutDisplayState(this.layout, this.rendererStatus);
     this.host.innerHTML = `
-      <section class="editor-shell">
+      <section class="editor-shell ${this.mobilePane === 'library' ? 'library-open' : this.mobilePane === 'inspector' ? 'inspector-open' : ''}">
         <header class="editor-toolbar">
           <div class="editor-title-block">
             <a class="icon-button" href="/layouts" data-route aria-label="Back to layouts">${icon('chevron', 'icon-back')}</a>
-            <div><strong>${escapeHtml(this.layout.name)}</strong><span>Revision ${this.layout.current_revision}${this.isDirty() ? ' · Unsaved changes' : ' · Saved'}${this.layout.active ? ' · active' : ''}</span></div>
+            <div><strong>${escapeHtml(this.layout.name)}</strong><span>Revision ${this.layout.current_revision}${this.isDirty() ? ' · Unsaved changes' : ' · Saved'}</span></div>
+          </div>
+          <div class="toolbar-cluster editor-pane-controls">
+            <button class="button button-ghost button-small" data-action="toggle-library" aria-expanded="${this.mobilePane === 'library'}" aria-controls="editor-camera-library">${icon('camera')} Cameras</button>
+            <button class="button button-ghost button-small" data-action="toggle-inspector" aria-expanded="${this.mobilePane === 'inspector'}" aria-controls="editor-tile-inspector">${icon('edit')} Tile</button>
           </div>
           <div class="toolbar-cluster">
             <button class="icon-button" data-action="undo" title="Undo (Ctrl+Z)" ${this.historyIndex <= 0 ? 'disabled' : ''}>${icon('undo')}</button>
@@ -128,12 +137,16 @@ export class LayoutEditor {
           <div class="toolbar-cluster toolbar-actions">
             <button class="button button-ghost" data-action="revert">Revert</button>
             <button class="button button-secondary" data-action="save">${icon('save')} Save draft</button>
-            <button class="button button-primary" data-action="save-apply">${icon('play')} Save & apply</button>
+            <button class="button button-primary" data-action="save-apply">${icon('play')} ${this.isDirty() ? 'Save & apply' : display.action}</button>
           </div>
         </header>
+        <div class="editor-display-state display-notice display-notice-${display.tone}" role="status" data-display-state="${display.kind}">
+          <div><strong>${escapeHtml(display.label)}</strong><p>${escapeHtml(display.detail)} Save draft stores edits without changing the wall.</p>${this.saveError ? `<p class="save-error" role="alert">${escapeHtml(this.saveError)}</p>` : ''}</div>
+          <button class="button button-ghost button-small" data-action="refresh-display">${icon('refresh')} Refresh status</button>
+        </div>
         <div class="editor-workspace">
-          <aside class="editor-library">
-            <div class="pane-heading"><div><h2>Cameras</h2><p>Click a camera, then click the display</p></div></div>
+          <aside class="editor-library" id="editor-camera-library" aria-label="Camera library">
+            <div class="pane-heading"><div><h2>Cameras</h2><p>Click a camera, then click the display</p></div><button class="icon-button editor-pane-close" data-action="close-pane" aria-label="Close camera library">${icon('close')}</button></div>
             <label class="search-field">${icon('search')}<input type="search" placeholder="Filter cameras" data-camera-search /></label>
             <div class="camera-library-list">
               ${this.cameraLibraryHtml(this.cameras)}
@@ -158,6 +171,7 @@ export class LayoutEditor {
           </aside>
           <main class="editor-stage">
             <div class="stage-ruler"><span>${outputWidth} × ${outputHeight}</span><span>${this.data.slots.length} slot${this.data.slots.length === 1 ? '' : 's'}</span></div>
+            <p class="editor-preview-note">Editing preview. ${featureSupport(this.rendererStatus?.capabilities, 'labels') === true ? 'Use stream health to check playback.' : 'Camera labels are for editing; label playback is unsupported or not reported by the renderer.'} <a href="/renderer" data-route>Renderer capabilities</a></p>
             <div class="display-frame" style="aspect-ratio:${ratio}; --grid-cols:${this.data.grid_columns}; --grid-rows:${this.data.grid_rows}; background:${escapeHtml(this.data.background)}">
               <div class="layout-canvas ${this.gridEnabled ? 'show-grid' : ''}" tabindex="0" aria-label="Layout canvas">
                 ${this.data.slots.map((slot) => this.slotHtml(slot)).join('')}
@@ -169,7 +183,8 @@ export class LayoutEditor {
               <span>${selectedSlots.length ? `${selectedSlots.length} selected` : 'Nothing selected'}</span>
             </div>
           </main>
-          <aside class="editor-inspector">
+          <aside class="editor-inspector" id="editor-tile-inspector" aria-label="Tile inspector">
+            <div class="editor-pane-close-row"><button class="button button-ghost button-small" data-action="close-pane">${icon('close')} Close inspector</button></div>
             ${this.inspectorHtml(selectedSlots)}
           </aside>
         </div>
@@ -234,17 +249,20 @@ export class LayoutEditor {
           ${this.numberField('W', 'width', slot.width * 100)}${this.numberField('H', 'height', slot.height * 100)}
         </div>
         <div class="coordinate-readout">${percent(slot.x)}, ${percent(slot.y)} · ${percent(slot.width)} × ${percent(slot.height)}</div>
+        ${slot.pixel_override ? `<p class="form-help">Fixed pixel placement overrides this canvas on the display. Moving or resizing this tile replaces those fixed pixels with the canvas geometry.</p><button class="button button-ghost button-small" data-action="use-canvas-geometry" ${slot.locked ? 'disabled' : ''}>Use canvas placement</button>` : ''}
       </div>
       <div class="inspector-section">
         <label class="field-label">Aspect behavior</label>
         <select class="select" data-field="aspect_mode">
-          ${[['cover','Cover — fill and crop'],['contain','Contain — fit entire image'],['stretch','Stretch — fill without preserving ratio'],['native','Native — original size where supported']].map(([mode,label]) => `<option value="${mode}" ${slot.aspect_mode === mode ? 'selected' : ''}>${label}</option>`).join('')}
+          ${[['cover','Cover — fill and crop'],['contain','Contain — fit entire image'],['stretch','Stretch — fill without preserving ratio'],['native',featureSupport(this.rendererStatus?.capabilities, 'native_size') === true ? 'Native — original size' : 'Native — unavailable on this renderer']].map(([mode,label]) => `<option value="${mode}" ${slot.aspect_mode === mode ? 'selected' : ''} ${mode === 'native' && featureSupport(this.rendererStatus?.capabilities, 'native_size') !== true ? 'disabled' : ''}>${label}</option>`).join('')}
         </select>
-        <label class="field-label">Label</label><input class="input" data-field="label" value="${escapeHtml(slot.label ?? '')}" />
+        ${slot.aspect_mode === 'native' && featureSupport(this.rendererStatus?.capabilities, 'native_size') !== true ? '<p class="form-help">This saved native setting is retained for compatibility. Choose a supported aspect mode for predictable playback.</p>' : ''}
+        <label class="field-label">Label</label><input class="input" data-field="label" value="${escapeHtml(slot.label ?? '')}" ${featureSupport(this.rendererStatus?.capabilities, 'labels') === true ? '' : 'disabled'} />
         <label class="field-label">Title position</label>
-        <select class="select" data-field="title_position">
+        <select class="select" data-field="title_position" ${featureSupport(this.rendererStatus?.capabilities, 'labels') === true ? '' : 'disabled'}>
           ${['top-left','top-right','bottom-left','bottom-right','none'].map((position) => `<option value="${position}" ${slot.title_position === position ? 'selected' : ''}>${position.replace('-', ' ')}</option>`).join('')}
         </select>
+        ${featureSupport(this.rendererStatus?.capabilities, 'labels') === true ? '' : '<p class="form-help">Saved labels are preserved. Label playback is unsupported or not reported by the current renderer.</p>'}
       </div>
       <div class="inspector-section">
         <div class="button-grid two">
@@ -325,6 +343,7 @@ export class LayoutEditor {
       item.addEventListener('click', () => {
         const id = item.dataset.cameraId ?? '';
         this.selectedCameraId = this.selectedCameraId === id ? null : id;
+        this.mobilePane = null;
         this.render();
       });
     });
@@ -370,6 +389,7 @@ export class LayoutEditor {
       const dx = (move.clientX - startX) / rect.width;
       const dy = (move.clientY - startY) / rect.height;
       changed ||= Math.abs(dx) > 0.001 || Math.abs(dy) > 0.001;
+      if (!changed) return;
       for (const current of this.data.slots.filter((item) => this.selected.has(item.id))) {
         if (current.locked) continue;
         const original = originals.get(current.id)!;
@@ -390,6 +410,7 @@ export class LayoutEditor {
           current.x = this.snapPosition(clamp(original.x + dx, 0, 1 - current.width), current.width, 'x', current.id);
           current.y = this.snapPosition(clamp(original.y + dy, 0, 1 - current.height), current.height, 'y', current.id);
         }
+        if (!resize || current.id === slot.id) current.pixel_override = null;
         this.updateSlotStyle(current);
       }
     };
@@ -460,7 +481,7 @@ export class LayoutEditor {
     const available = this.cameras.filter((camera) => camera.enabled && !used.has(camera.id));
     this.data.slots = geometry.map(([x, y, width, height], index) => {
       const prior = existing[index];
-      if (prior) return { ...prior, x, y, width, height };
+      if (prior) return { ...prior, x, y, width, height, pixel_override: null };
       const camera = available.shift();
       if (camera) return { ...defaultSlot(camera, x, y), x, y, width, height };
       return { ...defaultSlot({ id: '', name: `Slot ${index + 1}` } as Camera, x, y), x, y, width, height, type: 'empty' as const, camera_id: null };
@@ -475,6 +496,8 @@ export class LayoutEditor {
     if (!slot || slot.locked || this.busy) return;
     const field = input.dataset.field as keyof Slot;
     const value = input.value;
+    if (['label', 'title_position'].includes(field) && featureSupport(this.rendererStatus?.capabilities, 'labels') !== true) return;
+    if (field === 'aspect_mode' && value === 'native' && featureSupport(this.rendererStatus?.capabilities, 'native_size') !== true) return;
     if (field === 'camera_id') {
       slot.camera_id = value || null;
       if (value && slot.type === 'empty') slot.type = 'fixed';
@@ -518,6 +541,9 @@ export class LayoutEditor {
     switch (name) {
       case 'undo': this.undo(); break;
       case 'redo': this.redo(); break;
+      case 'toggle-library': this.mobilePane = this.mobilePane === 'library' ? null : 'library'; this.render(); break;
+      case 'toggle-inspector': this.mobilePane = this.mobilePane === 'inspector' ? null : 'inspector'; this.render(); break;
+      case 'close-pane': this.mobilePane = null; this.render(); break;
       case 'toggle-grid': this.gridEnabled = !this.gridEnabled; this.render(); break;
       case 'toggle-previews':
         this.showPreviews = !this.showPreviews;
@@ -526,6 +552,10 @@ export class LayoutEditor {
         break;
       case 'save': await this.save(false); break;
       case 'save-apply': await this.save(true); break;
+      case 'refresh-display': await this.refreshDisplayStatus(); this.render(); break;
+      case 'use-canvas-geometry':
+        for (const slot of this.data.slots.filter((item) => this.selected.has(item.id) && !item.locked)) slot.pixel_override = null;
+        this.recordHistory(); this.render(); break;
       case 'revert': await this.revert(); break;
       case 'delete': this.deleteSelected(); break;
       case 'duplicate': this.duplicateSelected(); break;
@@ -542,33 +572,53 @@ export class LayoutEditor {
     if (this.busy) return;
     this.busy = true;
     this.host.inert = true;
+    this.saveError = '';
+    let saved = !this.isDirty();
     try {
-      const updated = await api<Layout>(`/layouts/${this.layout.id}`, {
-        method: 'PUT',
-        body: JSON.stringify({ data: this.data, status: 'draft' }),
-      });
-      this.layout = updated;
-      this.data = cloneData(updated.revision!.data);
-      this.savedData = JSON.stringify(this.data);
-      this.history = [];
-      this.historyIndex = -1;
-      this.recordHistory();
+      if (!saved) {
+        const updated = await api<Layout>(`/layouts/${this.layout.id}`, {
+          method: 'PUT',
+          body: JSON.stringify({ data: this.data, status: 'draft' }),
+        });
+        this.acceptSavedLayout(updated);
+        saved = true;
+      }
       if (apply) {
-        await api(`/layouts/${this.layout.id}/activate`, { method: 'POST' });
-        this.layout.active = true;
-        toast('Layout saved and applied to the display', 'success');
+        const result = await api<LayoutApplyResult>(`/layouts/${this.layout.id}/activate`, { method: 'POST' });
+        this.acceptSavedLayout(result.layout);
+        this.rendererStatus = result.renderer;
+        toast(`Revision ${this.layout.current_revision} applied; check stream health for playback`, 'success');
       } else {
-        toast('Draft saved', 'success');
+        await this.refreshDisplayStatus();
+        toast('Draft saved. Apply when you want to update the display.', 'success');
       }
       this.onSaved?.(this.layout);
-      this.render();
     } catch (error) {
-      toast(error instanceof Error ? error.message : 'Unable to save layout', 'error');
+      const detail = error instanceof Error ? error.message : 'Request failed';
+      this.saveError = saved && apply
+        ? `Revision ${this.layout.current_revision} is saved, but applying it failed: ${detail}. Retry Apply without saving another revision.`
+        : `Changes were not saved: ${detail}`;
+      if (saved && apply) await this.refreshDisplayStatus();
+      toast(this.saveError, 'error');
     } finally {
       this.busy = false;
       this.host.inert = false;
       this.render();
     }
+  }
+
+  private acceptSavedLayout(layout: Layout): void {
+    this.layout = layout;
+    this.data = cloneData(layout.revision!.data);
+    this.savedData = JSON.stringify(this.data);
+    this.history = [];
+    this.historyIndex = -1;
+    this.recordHistory();
+  }
+
+  private async refreshDisplayStatus(): Promise<void> {
+    try { this.rendererStatus = await api<RendererStatus>('/renderer/status'); }
+    catch { this.rendererStatus = null; }
   }
 
   private async revert(): Promise<void> {
@@ -596,7 +646,7 @@ export class LayoutEditor {
 
   private duplicateSelected(): void {
     const copies = this.data.slots.filter((slot) => this.selected.has(slot.id)).map((slot) => ({
-      ...cloneData(slot), id: newId(), name: `${slot.name} copy`, x: clamp(slot.x + 0.02, 0, 1 - slot.width), y: clamp(slot.y + 0.02, 0, 1 - slot.height), locked: false,
+      ...cloneData(slot), id: newId(), name: `${slot.name} copy`, x: clamp(slot.x + 0.02, 0, 1 - slot.width), y: clamp(slot.y + 0.02, 0, 1 - slot.height), locked: false, pixel_override: null,
     }));
     this.data.slots.push(...copies);
     this.selected = new Set(copies.map((slot) => slot.id));
@@ -614,7 +664,7 @@ export class LayoutEditor {
     const slots = this.data.slots.filter((slot) => this.selected.has(slot.id) && !slot.locked);
     if (slots.length < 2) return;
     const value = Math.min(...slots.map((slot) => slot[axis]));
-    slots.forEach((slot) => { slot[axis] = value; });
+    slots.forEach((slot) => { slot[axis] = value; slot.pixel_override = null; });
     this.recordHistory(); this.render();
   }
 
@@ -624,7 +674,7 @@ export class LayoutEditor {
     const first = slots[0]!;
     const last = slots.at(-1)!;
     const span = last[axis] - first[axis];
-    slots.forEach((slot, index) => { slot[axis] = first[axis] + span * (index / (slots.length - 1)); });
+    slots.forEach((slot, index) => { slot[axis] = first[axis] + span * (index / (slots.length - 1)); slot.pixel_override = null; });
     this.recordHistory(); this.render();
   }
 
@@ -661,7 +711,7 @@ export class LayoutEditor {
     if (meta && event.key.toLowerCase() === 'y') { event.preventDefault(); this.redo(); return; }
     if (meta && event.key.toLowerCase() === 'c') { this.clipboard = this.data.slots.filter((slot) => this.selected.has(slot.id)).map(cloneData); return; }
     if (meta && event.key.toLowerCase() === 'v') {
-      const copies = this.clipboard.map((slot) => ({ ...cloneData(slot), id: newId(), x: clamp(slot.x + .02, 0, 1 - slot.width), y: clamp(slot.y + .02, 0, 1 - slot.height) }));
+      const copies = this.clipboard.map((slot) => ({ ...cloneData(slot), id: newId(), x: clamp(slot.x + .02, 0, 1 - slot.width), y: clamp(slot.y + .02, 0, 1 - slot.height), locked: false, pixel_override: null }));
       this.data.slots.push(...copies); this.selected = new Set(copies.map((slot) => slot.id)); this.recordHistory(); this.render(); return;
     }
     if (event.key === 'Delete' || event.key === 'Backspace') { event.preventDefault(); this.deleteSelected(); return; }
@@ -673,6 +723,7 @@ export class LayoutEditor {
         if (event.key === 'ArrowRight') slot.x = clamp(slot.x + step, 0, 1 - slot.width);
         if (event.key === 'ArrowUp') slot.y = clamp(slot.y - step, 0, 1 - slot.height);
         if (event.key === 'ArrowDown') slot.y = clamp(slot.y + step, 0, 1 - slot.height);
+        slot.pixel_override = null;
       }
       this.recordHistory(); this.render();
     }

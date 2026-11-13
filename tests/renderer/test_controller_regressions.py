@@ -230,3 +230,98 @@ async def test_shutdown_joins_rotation_and_focus_tasks(db, cipher):
     await controller.shutdown()
     assert task.done()
     assert focus_task.done()
+
+
+@pytest.mark.asyncio
+async def test_manual_previous_prepares_requested_camera_before_cutover(db, cipher, monkeypatch):
+    data = seed_wall(db)
+    controller = await controller_for(db, cipher, data)
+    prepared = []
+    readiness = iter((False, True))
+    original_switch = controller.backend.activate_prepared_stream
+
+    def prepare(slot_id, spec):
+        assert controller.current_specs[slot_id].camera_id == data["cameras"][0]
+        prepared.append(spec.camera_id)
+
+    def ready(slot_id, spec):
+        assert prepared[-1] == spec.camera_id
+        assert controller.current_specs[slot_id].camera_id == data["cameras"][0]
+        return next(readiness)
+
+    def switch(slot_id, spec):
+        assert prepared[-1] == data["cameras"][2]
+        original_switch(slot_id, spec)
+
+    monkeypatch.setattr(controller.backend, "prepare_stream", prepare)
+    monkeypatch.setattr(controller.backend, "prepared_stream_ready", ready)
+    monkeypatch.setattr(controller.backend, "activate_prepared_stream", switch)
+    try:
+        await controller.rotate("slot-0", prepare_only=True)
+        await controller.rotate("slot-0", direction=-1, manual=True)
+        assert prepared == [data["cameras"][1], data["cameras"][2]]
+        assert controller.current_specs["slot-0"].camera_id == data["cameras"][2]
+        assert controller.rotation_cursors["slot-0"].index == 2
+    finally:
+        await controller.shutdown()
+
+
+@pytest.mark.parametrize("failure_behavior", ["skip", "hold"])
+@pytest.mark.asyncio
+async def test_manual_rotation_timeout_keeps_current_camera_and_cursor(
+    db, cipher, monkeypatch, failure_behavior,
+):
+    data = seed_wall(db)
+    db.get(RotationGroup, data["group"]).failure_behavior = failure_behavior
+    db.commit()
+    controller = await controller_for(db, cipher, data)
+    cancelled = []
+    monkeypatch.setattr("mosaivue.renderer.controller.MANUAL_ROTATION_READY_TIMEOUT", 0)
+    monkeypatch.setattr(controller.backend, "prepared_stream_ready", lambda *_: False)
+    monkeypatch.setattr(controller.backend, "cancel_prepared", cancelled.append)
+    monkeypatch.setattr(controller.backend, "activate_prepared_stream", lambda *_: pytest.fail("Premature cutover"))
+    try:
+        with pytest.raises(RuntimeError, match="current camera was kept"):
+            await controller.rotate("slot-0", manual=True)
+        assert controller.current_specs["slot-0"].camera_id == data["cameras"][0]
+        assert controller.backend.streams["slot-0"].camera_id == data["cameras"][0]
+        assert controller.rotation_cursors["slot-0"].index == 0
+        assert cancelled == ["slot-0"]
+    finally:
+        await controller.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_manual_rotation_respects_disabled_preconnection(db, cipher, monkeypatch):
+    data = seed_wall(db)
+    db.get(RotationGroup, data["group"]).preconnect = "off"
+    db.commit()
+    controller = await controller_for(db, cipher, data)
+    monkeypatch.setattr(controller.backend, "prepare_stream", lambda *_: pytest.fail("Unexpected preparation"))
+    monkeypatch.setattr(controller.backend, "activate_prepared_stream", lambda *_: pytest.fail("Unexpected standby activation"))
+    try:
+        await controller.rotate("slot-0", manual=True)
+        assert controller.current_specs["slot-0"].camera_id == data["cameras"][1]
+    finally:
+        await controller.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_status_caches_capabilities_and_preserves_wall_identity_during_focus(db, cipher, monkeypatch):
+    data = seed_wall(db)
+    controller = await controller_for(db, cipher, data)
+    monkeypatch.setattr(controller.backend, "capabilities", lambda: pytest.fail("Repeated hardware detection"))
+    try:
+        status = controller.status()
+        assert status["capabilities"]["feature_support"]["labels"] is True
+        status["capabilities"]["feature_support"]["labels"] = False
+        status["capabilities"]["limitations"].clear()
+        await controller.focus_camera(data["cameras"][1])
+        focused = controller.status()
+        assert focused["focused"] is True
+        assert focused["active_layout_id"] == data["layout"]
+        assert focused["active_revision"] == 1
+        assert focused["capabilities"]["feature_support"]["labels"] is True
+        assert focused["capabilities"]["limitations"]
+    finally:
+        await controller.shutdown()

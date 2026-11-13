@@ -13,6 +13,9 @@ export class ApiError extends Error {
 export function apiErrorMessage(detail: unknown, fallback: string): string {
   const value = typeof detail === 'object' && detail && 'detail' in detail
     ? (detail as { detail: unknown }).detail : detail;
+  if (typeof value === 'object' && value && 'errors' in value && Array.isArray(value.errors)) {
+    return value.errors.filter((item): item is string => typeof item === 'string').join('; ') || fallback;
+  }
   if (Array.isArray(value)) {
     return value.map((item: { loc?: unknown[]; msg?: string }) => {
       const field = item.loc?.filter((part) => part !== 'body').join(' → ');

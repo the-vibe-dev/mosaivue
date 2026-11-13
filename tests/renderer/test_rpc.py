@@ -84,6 +84,40 @@ async def test_rpc_timeout_is_an_availability_error(monkeypatch, tmp_path):
     assert writer.closed
 
 
+@pytest.mark.parametrize("action", ["apply_layout", "focus_camera", "restore_layout", "rotation_next", "rotation_previous", "restart_stream"])
+@pytest.mark.asyncio
+async def test_mutating_rpc_uses_operation_budget(monkeypatch, tmp_path, action):
+    writer = MemoryWriter()
+    reader = asyncio.StreamReader(limit=RPC_MESSAGE_LIMIT)
+
+    async def connect(path, *, limit):
+        return reader, writer
+
+    async def delayed_response():
+        await asyncio.sleep(0.03)
+        reader.feed_data(b'{"ok":true,"result":{"applied":true}}\n')
+        reader.feed_eof()
+
+    monkeypatch.setattr(asyncio, "open_unix_connection", connect)
+    task = asyncio.create_task(delayed_response())
+    try:
+        client = RendererRPCClient(tmp_path / "r.sock", timeout=0.01, operation_timeout=1)
+        assert await client.call(action) == {"applied": True}
+        assert writer.closed
+    finally:
+        await task
+
+
+@pytest.mark.asyncio
+async def test_mutation_still_uses_short_connection_deadline(monkeypatch, tmp_path):
+    async def connect(path, *, limit):
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(asyncio, "open_unix_connection", connect)
+    with pytest.raises(RendererRPCError, match="unavailable"):
+        await RendererRPCClient(tmp_path / "r.sock", timeout=0.01, operation_timeout=1).call("apply_layout")
+
+
 @pytest.mark.parametrize("response", [b"not-json\n", b"[]\n", b'{"ok":"yes"}\n'])
 @pytest.mark.asyncio
 async def test_rpc_malformed_response_is_normalized(monkeypatch, tmp_path, response):

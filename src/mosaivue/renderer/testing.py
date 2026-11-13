@@ -2,7 +2,15 @@ from __future__ import annotations
 
 from typing import Any
 
-from .base import HealthState, Rect, RendererBackend, RendererCapabilities, StreamHealth, StreamSpec
+from .base import (
+    HealthState,
+    Rect,
+    RendererBackend,
+    RendererCapabilities,
+    StreamHealth,
+    StreamSpec,
+    feature_flags,
+)
 
 
 class TestRenderer(RendererBackend):
@@ -25,6 +33,8 @@ class TestRenderer(RendererBackend):
             dynamic_geometry=True,
             dynamic_source_replace=True,
             per_stream_recovery=True,
+            feature_support=feature_flags("labels", "manual_crop", "opacity", "z_order"),
+            limitations=["In-memory test renderer; no physical video output."],
         )
 
     def set_output_size(self, width: int, height: int) -> None:

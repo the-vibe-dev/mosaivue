@@ -19,7 +19,15 @@ from ..services.decoder_policy import (
     preferred_software_decoder,
     video_decoder_factory,
 )
-from .base import HealthState, Rect, RendererBackend, RendererCapabilities, StreamHealth, StreamSpec
+from .base import (
+    HealthState,
+    Rect,
+    RendererBackend,
+    RendererCapabilities,
+    StreamHealth,
+    StreamSpec,
+    feature_flags,
+)
 
 LOGGER = logging.getLogger(__name__)
 T = TypeVar("T")
@@ -185,10 +193,20 @@ class GStreamerRenderer(RendererBackend):
 
     @classmethod
     def detect(cls) -> RendererCapabilities:
+        features = feature_flags("labels", "manual_crop", "opacity", "z_order")
+        limitations = [
+            "Manual crop needs known source dimensions.",
+            "Native size currently uses contain behavior.",
+            "Audio, portrait output, monitor selection, display refresh control, and blanking control are not implemented.",
+            "Per-tile backgrounds and borders are not rendered.",
+        ]
         try:
             Gst, _, _ = _import_gst()
         except GStreamerUnavailable as exc:
-            return RendererCapabilities(name="gstreamer", available=False, reason=str(exc))
+            return RendererCapabilities(
+                name="gstreamer", available=False, reason=str(exc),
+                feature_support=features, limitations=limitations,
+            )
         required = [
             "compositor",
             "decodebin",
@@ -233,13 +251,18 @@ class GStreamerRenderer(RendererBackend):
         return RendererCapabilities(
             name="gstreamer",
             available=not missing and bool(sinks),
-            reason=f"Missing GStreamer elements: {', '.join(missing)}" if missing else None,
+            reason=(
+                f"Missing GStreamer elements: {', '.join(missing)}" if missing
+                else "No display sink plugin is available" if not sinks else None
+            ),
             sinks=sinks,
             decoders=decoders,
             dynamic_geometry=True,
             dynamic_source_replace=True,
             per_stream_recovery=True,
             snapshots=False,
+            feature_support=features,
+            limitations=limitations,
             hardware_decode=bool(hardware_decoders) or any(
                 name.startswith(("v4l2", "omx", "mpp", "nv")) for name in decoders
             ),
@@ -941,6 +964,20 @@ class GStreamerRenderer(RendererBackend):
 
     def activate_prepared_stream(self, slot_id: str, spec: StreamSpec) -> None:
         self._call(self._replace_stream, slot_id, spec, True)
+
+    def prepared_stream_ready(self, slot_id: str, spec: StreamSpec) -> bool:
+        return self._call(self._prepared_stream_ready, slot_id, spec)
+
+    def _prepared_stream_ready(self, slot_id: str, spec: StreamSpec) -> bool:
+        runtime = self._slots.get(slot_id)
+        prepared = runtime.prepared if runtime else None
+        return bool(
+            prepared
+            and (prepared.spec.camera_id, prepared.spec.stream_profile_id, prepared.spec.url)
+            == (spec.camera_id, spec.stream_profile_id, spec.url)
+            and prepared.ready and prepared.last_frame_monotonic is not None
+            and time.monotonic() - prepared.last_frame_monotonic <= 8
+        )
 
     def _replace_stream(self, slot_id: str, spec: StreamSpec, require_prepared: bool = False) -> None:
         self._normalize_spec_dimensions(spec)

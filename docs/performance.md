@@ -1,6 +1,6 @@
 # Performance and qualification
 
-Mosaivue has no universal camera-count guarantee. Decoder availability and load depend on the board, OS, codec, source dimensions/FPS/bitrate, output, sink, rotations and browser preview activity. The **0.1.0b3 review candidate** has software regression coverage; its changed runtime paths require hardware qualification.
+Mosaivue has no universal camera-count guarantee. Decoder availability and load depend on the board, OS, codec, source dimensions/FPS/bitrate, output, sink, rotations and browser preview activity. The **0.1.0b4 review candidate** has software regression coverage; its changed runtime paths require hardware qualification.
 
 ## GStreamer compositor frame rate
 
@@ -43,7 +43,9 @@ Provide lower-resolution substreams so small tiles need not decode full-resoluti
 
 The stored `profile` label (`balanced`, `performance`, `quality`, `low-latency` or `custom`) is not evidence that a complete tuning preset has been applied. Verify actual source selection, decoder, sink, latency setting and compositor rate. Optimization recommendations are advisory.
 
-JPEG previews use a separate capture path and can add decoder/CPU load. The candidate does not provide an appliance-wide preview queue or cache; include simultaneous preview activity in capacity testing on smaller boards.
+JPEG previews use a separate capture path and can add decoder/CPU load. The API now shares a bounded work pool between preview capture and stream tests: one active job by default, eight queued distinct jobs, and a two-second queue timeout. Identical in-flight requests share work. Successful JPEGs are cached internally for two seconds, with limits of 64 entries and 8 MiB; browser responses remain `no-store`. Busy requests return HTTP 503 with `Retry-After: 2`.
+
+`preview_concurrency` accepts 1-4 and `preview_cache_ttl_seconds` accepts 0-30 (zero disables caching), with equivalent `MOSAIVUE_PREVIEW_CONCURRENCY` and `MOSAIVUE_PREVIEW_CACHE_TTL_SECONDS` environment settings. Restart the API after changing them. These are per-process limits for the standard single-process server, not a shared limit across custom multiple-worker deployments, the HDMI renderer or CLI commands. Qualify simultaneous preview activity on the target board before raising concurrency. Cancellation of an HTTP request does not release a decoder slot while its capture continues.
 
 ## Synthetic benchmark
 
@@ -67,4 +69,4 @@ A 24-hour initial run followed by a longer 72-hour candidate soak is a proposed 
 
 Earlier site results for Pi 3B+/OMXPlayer, ROCK Pi 4B+/GStreamer and Ubuntu are described in the [beta notes](beta-release.md). They remain evidence for those earlier builds and source mixes. This review did not run the new candidate on a physical Pi, ROCK Pi, GPU display or live private camera; Pi 4/5 output and broader stream mixes remain unqualified.
 
-The [review report](review/report.md) separates software verification from outstanding browser, installer and hardware acceptance. Use its [validation record](review/validation.md) for the actual completed checks and environment limitations.
+The [current review report](review/current-report.md) separates software verification from outstanding browser, installer and hardware acceptance. Use its [validation record](review/current-validation.md) for completed checks and environment limitations. Supplied b3 Pi upgrade/reboot and browser evidence is preserved in [its original record](review/supplied-b3-build-verification.md).

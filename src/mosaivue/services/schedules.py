@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, time
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..models import Schedule
+
+LOGGER = logging.getLogger(__name__)
 
 
 def _parse_time(value: str) -> time:
@@ -21,7 +24,8 @@ def schedule_matches(schedule: Schedule, moment: datetime) -> bool:
     end = _parse_time(schedule.end_time)
     # Days belong to the start of a window. Monday 22:00–06:00 includes
     # Tuesday 05:00, not Monday 05:00. End times are exclusive so adjacent
-    # windows do not overlap for an extra minute. Equal times mean 24 hours.
+    # windows do not overlap for an extra minute. Equal times mean one local
+    # calendar-day window (elapsed hours can differ at a daylight-saving change).
     if start < end:
         return moment.weekday() in schedule.days and start <= current < end
     if current >= start:
@@ -40,6 +44,9 @@ def select_scheduled_layout(db: Session, moment: datetime) -> str | None:
         )
     )
     for schedule in schedules:
-        if schedule_matches(schedule, moment):
-            return schedule.layout_id
+        try:
+            if schedule_matches(schedule, moment):
+                return schedule.layout_id
+        except (ValueError, TypeError, AttributeError):
+            LOGGER.warning("Skipping invalid stored schedule %s", schedule.id)
     return None

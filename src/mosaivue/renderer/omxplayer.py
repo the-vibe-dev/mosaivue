@@ -15,7 +15,15 @@ from dataclasses import dataclass, replace
 from typing import Any
 from urllib.parse import urlsplit
 
-from .base import HealthState, Rect, RendererBackend, RendererCapabilities, StreamHealth, StreamSpec
+from .base import (
+    HealthState,
+    Rect,
+    RendererBackend,
+    RendererCapabilities,
+    StreamHealth,
+    StreamSpec,
+    feature_flags,
+)
 
 LOGGER = logging.getLogger(__name__)
 HANDOFF_SETTLE_SECONDS = 2.5
@@ -29,6 +37,7 @@ class _Player:
     started: float
     dbus_name: str
     visible: bool = True
+    retry_at: float = 0.0
 
 
 class OmxPlayerRenderer(RendererBackend):
@@ -58,6 +67,15 @@ class OmxPlayerRenderer(RendererBackend):
             per_stream_recovery=True,
             snapshots=False,
             hardware_decode=True,
+            feature_support=feature_flags("opacity", "z_order"),
+            limitations=[
+                "Tile labels and manual crop are not rendered.",
+                "Opacity changes restart the affected player.",
+                "Native size uses letterbox behavior.",
+                "Playback health confirms player status, not video-frame advancement.",
+                "Audio, portrait output, monitor selection, display refresh control, and blanking control are not implemented.",
+                "Per-tile backgrounds and borders are not rendered.",
+            ],
         )
 
     def capabilities(self) -> RendererCapabilities:
@@ -67,7 +85,8 @@ class OmxPlayerRenderer(RendererBackend):
         if not self.detect().available:
             raise RuntimeError("OMXPlayer is unavailable")
         self.set_output_size(width, height)
-        if self._monitor is None:
+        if self._monitor is None or not self._monitor.is_alive():
+            self._stop.clear()
             self._started = time.monotonic()
             self._monitor = threading.Thread(target=self._watch, daemon=True, name="mosaivue-omx-monitor")
             self._monitor.start()
@@ -355,35 +374,64 @@ class OmxPlayerRenderer(RendererBackend):
                 for slot_id, player in list(self._players.items()):
                     if not player.visible:
                         continue
-                    if player.process.poll() is not None:
-                        count = player.health.restart_count + 1
-                        LOGGER.warning("OMXPlayer exited for slot %s; restarting", slot_id)
-                        self._players[slot_id] = self._start(
-                            player.spec, restart_count=count,
-                            switch_count=player.health.switch_count,
-                            last_restart_reason="Player exited",
+                    try:
+                        now = time.monotonic()
+                        if player.process.poll() is not None:
+                            if now >= player.retry_at:
+                                self._recover_player(slot_id, player, "Player exited", now)
+                            continue
+                        if self._playback_status(player):
+                            player.health.state = HealthState.live
+                            player.health.detail = "Playback confirmed by OMXPlayer"
+                            player.health.last_frame_monotonic = now
+                            player.health.reconnect_backoff_seconds = 1.0
+                            player.retry_at = 0.0
+                        elif (
+                            now - (player.health.last_frame_monotonic or player.started) > 30
+                            and now >= player.retry_at
+                        ):
+                            self._recover_player(
+                                slot_id, player, "Playback unconfirmed for 30 seconds", now
+                            )
+                    except Exception as exc:
+                        # One unexpected player failure must not terminate the
+                        # shared monitor and disable recovery for healthy tiles.
+                        player.health.state = HealthState.offline
+                        player.health.detail = "Player monitor failed; recovery will retry"
+                        player.retry_at = time.monotonic() + 3
+                        LOGGER.warning(
+                            "OMXPlayer monitor failed for slot %s (%s)", slot_id, type(exc).__name__
                         )
-                        continue
-                    if self._playback_status(player):
-                        player.health.state = HealthState.live
-                        player.health.detail = "Playback confirmed by OMXPlayer"
-                        player.health.last_frame_monotonic = time.monotonic()
-                    elif time.monotonic() - (player.health.last_frame_monotonic or player.started) > 30:
-                        player.health.state = HealthState.degraded
-                        player.health.detail = "Playback not confirmed; restarting player"
-                        count = player.health.restart_count + 1
-                        LOGGER.warning("OMXPlayer playback unconfirmed for slot %s; restarting", slot_id)
-                        self._stop_player(player)
-                        self._players[slot_id] = self._start(
-                            player.spec, restart_count=count,
-                            switch_count=player.health.switch_count,
-                            last_restart_reason="Playback unconfirmed for 30 seconds",
-                        )
+
+    def _recover_player(self, slot_id: str, player: _Player, reason: str, now: float) -> None:
+        delay = min(60.0, max(1.0, player.health.reconnect_backoff_seconds))
+        player.retry_at = now + delay
+        player.health.reconnect_backoff_seconds = min(60.0, delay * 2)
+        player.health.restart_count += 1
+        player.health.last_restart_reason = reason
+        player.health.state = HealthState.reconnecting
+        player.health.detail = "Restarting player"
+        try:
+            self._stop_player(player)
+            replacement = self._start(
+                player.spec, restart_count=player.health.restart_count,
+                switch_count=player.health.switch_count, last_restart_reason=reason,
+            )
+            replacement.retry_at = player.retry_at
+            replacement.health.reconnect_backoff_seconds = player.health.reconnect_backoff_seconds
+            self._players[slot_id] = replacement
+        except Exception as exc:
+            player.health.state = HealthState.offline
+            player.health.detail = f"Player restart failed; retrying in {delay:g} seconds"
+            LOGGER.warning(
+                "OMXPlayer restart failed for slot %s (%s)", slot_id, type(exc).__name__
+            )
 
     def health(self) -> dict[str, Any]:
         with self._lock:
             return {
-                "backend": "omxplayer", "state": "RUNNING", "sink": "HDMI hardware overlay",
+                "backend": "omxplayer", "state": "STOPPED" if self._stop.is_set() else "RUNNING",
+                "sink": "HDMI hardware overlay",
                 "output": {"width": self.width, "height": self.height},
                 "uptime_seconds": time.monotonic() - self._started if self._started else 0,
                 "streams": {key: player.health.to_dict() for key, player in self._players.items()},
@@ -407,3 +455,7 @@ class OmxPlayerRenderer(RendererBackend):
             for player in self._players.values():
                 self._stop_player(player)
             self._players.clear()
+        if self._monitor is not None and self._monitor is not threading.current_thread():
+            self._monitor.join(timeout=5)
+            if not self._monitor.is_alive():
+                self._monitor = None

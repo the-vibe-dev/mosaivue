@@ -9,6 +9,10 @@ test('validation errors identify fields instead of showing object strings', () =
   assert.equal(apiErrorMessage({ detail: [{ loc: ['body', 'stream_profiles', 0, 'url'], msg: 'RTSP URL required' }] }, 'Invalid request'), 'stream_profiles → 0 → url: RTSP URL required');
 });
 
+test('layout validation details retain the service errors rather than a generic HTTP status', () => {
+  assert.equal(apiErrorMessage({ detail: { errors: ['Slot uses a missing camera', 'Duplicate slot ID'], warnings: [] } }, 'Unprocessable Entity'), 'Slot uses a missing camera; Duplicate slot ID');
+});
+
 test('plain-text errors produce ApiError without reading the response body twice', async () => {
   const original = globalThis.fetch;
   globalThis.fetch = async () => new Response('Renderer unavailable', { status: 503, statusText: 'Service Unavailable' });

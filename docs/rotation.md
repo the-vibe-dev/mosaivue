@@ -4,7 +4,7 @@ A group provides camera entries, an interval and an order: `sequential`, `revers
 
 ## Independent slots and controls
 
-The 0.1.0b3 candidate maintains a separate cursor for each rotation slot, even when slots share a group. A rotation entry can select a stream profile; that profile must belong to its camera. Disabled groups do not advance and disabled cameras are excluded from selection.
+The candidate maintains a separate cursor for each rotation slot, even when slots share a group. A rotation entry can select a stream profile; that profile must belong to its camera. Disabled groups do not advance and disabled cameras are excluded from selection.
 
 The remote and API can pause, resume, advance or reverse rotation. Focus suspends layout rotation until **Restore layout** reapplies it. A failed layout/focus operation attempts to retain the previous streams and controller state; successful command handling still needs physical display verification.
 
@@ -16,11 +16,15 @@ Schedules use the appliance's local timezone. While a schedule window remains ac
 
 An overnight window belongs to its starting day: Monday 22:00–06:00 covers Monday evening and Tuesday morning. The end boundary is exclusive, and equal start/end times represent a full-day window.
 
+The full-day window follows the local calendar day; at daylight-saving changes it can span 23 or 25 elapsed hours. Invalid persisted schedules are skipped so later valid candidates can still apply. There is no per-schedule timezone.
+
 ## Preload and failure behavior
 
 Sequential/reverse order can prepare the next camera during the interval with **Preload: next**. **Off** prepares at switch time, so a ready cut can arrive later than the configured interval. Random/weighted modes prepare at switch time because the next choice is not reliably predictable.
 
 The OMXPlayer backend prepares a player offscreen, then positions and raises it for a cut. GStreamer uses prepared source branches where supported. The actual resource budget depends on backend, number of rotating slots, camera formats and appliance capacity; qualify this on the target hardware.
+
+In b4, manual Previous/Next with preconnection prepares the requested source even when an automatic standby exists for another camera. A readiness timeout keeps the displayed source and cursor. This is separate from automatic Skip/Hold policy. Random and weighted Previous retain their selection policies; they are not a playback-history stack.
 
 | Failure setting | When the requested next stream cannot be switched in |
 |---|---|

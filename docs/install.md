@@ -30,8 +30,8 @@ The command installs the download prerequisites first. The bootstrap then suppli
 ## Native appliance install
 
 ```bash
-tar -xzf mosaivue-0.1.0b2-source.tar.gz
-cd mosaivue-0.1.0b2
+tar -xzf mosaivue-0.1.0b4-source.tar.gz
+cd mosaivue-0.1.0b4
 sudo ./install.sh
 ```
 
@@ -52,6 +52,14 @@ includes it in the pre-install snapshot, and restores it if installation fails.
 Other platforms default to off. Verify the displayed camera crops after setup.
 
 On AMD64 Debian 12+ or Ubuntu 24.04+, the release `.deb` can be installed with `sudo apt install ./mosaivue_<version>_amd64.deb`. The package uses the same installer and keeps OS package dependencies in its metadata. ARM devices use the source bootstrap above. The 32-bit Bullseye/OMXPlayer path needs that bootstrap because its OS does not provide Python 3.11 as a Debian package. On that path, the source installer fetches checksum-pinned upstream `cryptography` and `pydantic-core` ARMv7 wheels: their same-version piwheels binaries require `libssl.so.3` and glibc 2.34 respectively, which Bullseye lacks. The installer imports the web and renderer entry points and verifies an AES-GCM round trip before stopping an existing wall.
+
+## Candidate installer changes
+
+The b4 local installer selects the checksum-pinned Bullseye `pydantic-core` wheel for the actual standard CPython 3.11-3.15 ABI. Unsupported implementations or free-threaded variants fail preflight before services stop. This is selection support, not new ARM or interpreter qualification. The existing upstream cryptography wheel and preflight import/AES-GCM checks are retained.
+
+After staging is renamed, editable installs repair entry-point, `.pth` and direct-URL metadata paths. Local HTTP health checks use the configured address family (IPv6 wildcard uses `::1`) and bypass HTTP proxy settings. These paths have focused software regressions; requalify privileged upgrade/rollback/reboot on the target appliance.
+
+Settings now validate known values. Use `mosaivue config validate` with the candidate environment before service restart, and correct field-specific errors. The [candidate upgrade guide](review/current-upgrade.md) explains backup boundaries and acceptance.
 
 ## Bind modes
 

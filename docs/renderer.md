@@ -9,8 +9,8 @@ backend instead. It runs one OMXPlayer process per slot and is selected by
 `"renderer_backend": "omxplayer"` in `/etc/mosaivue/config.json`. `auto` prefers
 OMXPlayer on Pi 1, 2, 3, and Zero when it is installed; other systems use
 GStreamer. Changes to a slot's position or camera restart only that player.
-OMXPlayer does not provide Mosaivue's crop, opacity, label overlay, or snapshot
-features. `contain` maps to letterbox, `cover` to fill/crop, and `stretch` to
+OMXPlayer does not provide Mosaivue's manual crop, label overlay, or snapshot
+features. Opacity is supported by restarting the affected player. `contain` maps to letterbox, `cover` to fill/crop, and `stretch` to
 distorted fill. `native` uses letterbox because OMXPlayer has no original-pixel
 mode in a fixed tile. It uses the HDMI mode already configured on the Pi.
 For a rotation switch, the next OMXPlayer can start offscreen and below the
@@ -22,6 +22,14 @@ The first-run setup and the Dashboard and Renderer pages offer the available
 backends. Their choice is stored in `/var/lib/mosaivue/renderer-backend.json`,
 which overrides `/etc/mosaivue/config.json`; `MOSAIVUE_RENDERER_BACKEND` has final
 priority. A choice made in the web interface restarts only the renderer service.
+
+## Capability contract and runtime supervision
+
+Backend listings and renderer status expose `feature_support` and readable `limitations`. These describe implemented controls separately from player availability and hardware qualification. Current physical backends do not implement audio output, native pixel sizing, physical portrait rotation, multiple outputs, per-tile backgrounds/borders, connector selection, monitor refresh changes or per-profile blanking control. GStreamer supports labels/manual crop/opacity/z-order; OMXPlayer supports opacity/z-order. Saved unsupported metadata remains compatible, and the browser gates the corresponding controls.
+
+Manual Previous/Next explicitly prepares the requested camera when preconnection is enabled, then waits up to eight seconds after preparation for readiness. A timeout retains the current source and cursor. Preparation itself can take additional time. Whole-layout acceptance still does not certify decoded frames or physical HDMI output.
+
+Temporary schedule database errors retry at the next normal 30-second poll; rotation configuration-read errors retry after five seconds. Unexpected termination of an essential RPC or scheduler task causes orderly daemon failure so systemd can recover it. OMXPlayer recovery isolates per-tile spawn failures and applies exponential retry deadlines capped at 60 seconds; the existing three-second monitor poll determines the actual retry cadence. Playback-state confirmation is not proof that pixels are advancing. RPC mutations receive a 60-second response budget while connection/status defaults remain ten seconds.
 
 ## Pipeline topology
 

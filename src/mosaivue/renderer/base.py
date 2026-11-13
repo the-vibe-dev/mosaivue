@@ -5,6 +5,16 @@ from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from typing import Any
 
+FEATURE_NAMES = (
+    "labels", "manual_crop", "opacity", "z_order", "audio", "native_size",
+    "portrait", "multiple_outputs", "background", "borders", "output_selection",
+    "refresh_rate", "prevent_blanking",
+)
+
+
+def feature_flags(*supported: str) -> dict[str, bool]:
+    return {name: name in supported for name in FEATURE_NAMES}
+
 
 class HealthState(StrEnum):
     connecting = "CONNECTING"
@@ -79,6 +89,8 @@ class RendererCapabilities:
     per_stream_recovery: bool = False
     snapshots: bool = False
     hardware_decode: bool = False
+    feature_support: dict[str, bool] = field(default_factory=feature_flags)
+    limitations: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -96,6 +108,10 @@ class RendererBackend(ABC):
     def activate_prepared_stream(self, slot_id: str, spec: StreamSpec) -> None:
         """Use a prepared source when supported, otherwise replace the stream."""
         self.replace_stream(slot_id, spec)
+
+    def prepared_stream_ready(self, slot_id: str, spec: StreamSpec) -> bool:
+        """Synchronous prepare is ready on return; async backends override this."""
+        return True
 
     def cancel_prepared(self, slot_id: str) -> None:
         """Discard a prepared replacement for a slot."""

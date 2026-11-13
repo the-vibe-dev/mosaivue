@@ -1,4 +1,5 @@
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -61,3 +62,42 @@ def test_schedule_selection_honors_priority_and_deterministic_ties(db):
     db.get(Schedule, "b").priority = 3
     db.flush()
     assert select_scheduled_layout(db, datetime(2026, 11, 9, 15)) == second.id
+
+
+@pytest.mark.parametrize("invalid", [{"start_time": "25:00"}, {"start_time": "broken"}, {"days": None}])
+def test_invalid_stored_schedule_does_not_suppress_valid_lower_priority_schedule(db, caplog, invalid):
+    wall = Layout(name="Valid wall")
+    db.add(wall)
+    db.flush()
+    malformed = Schedule(
+        name="Legacy invalid schedule", layout_id=wall.id, days=[0],
+        start_time="00:00", end_time="00:00", priority=10,
+    )
+    for key, value in invalid.items():
+        setattr(malformed, key, value)
+    valid = Schedule(
+        name="Valid schedule", layout_id=wall.id, days=[0],
+        start_time="00:00", end_time="00:00", priority=1,
+    )
+    db.add_all([malformed, valid])
+    db.flush()
+    assert select_scheduled_layout(db, datetime(2026, 11, 9, 15)) == wall.id
+    assert "Skipping invalid stored schedule" in caplog.text
+
+
+@pytest.mark.parametrize("fold", [0, 1])
+def test_overnight_schedule_matches_both_repeated_local_clock_hours(fold):
+    moment = datetime(2026, 11, 1, 1, 30, tzinfo=ZoneInfo("America/New_York"), fold=fold)
+    saturday_night = scheduled(days=[5], start="22:00", end="06:00")
+    assert schedule_matches(saturday_night, moment)
+
+
+def test_equal_times_follow_local_day_across_spring_clock_change():
+    timezone = ZoneInfo("America/New_York")
+    sunday = scheduled(days=[6], start="00:00", end="00:00")
+    start = datetime(2026, 3, 8, tzinfo=timezone)
+    end = datetime(2026, 3, 9, tzinfo=timezone)
+    assert (end.timestamp() - start.timestamp()) / 3600 == 23
+    assert schedule_matches(sunday, start)
+    assert schedule_matches(sunday, datetime(2026, 3, 8, 23, 59, tzinfo=timezone))
+    assert not schedule_matches(sunday, end)

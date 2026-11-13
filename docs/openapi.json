@@ -3,7 +3,7 @@
   "info": {
     "title": "Mosaivue API",
     "description": "Local-first RTSP camera wall control plane",
-    "version": "0.1.0b3"
+    "version": "0.1.0b4"
   },
   "paths": {
     "/api/v1/auth/setup/status": {

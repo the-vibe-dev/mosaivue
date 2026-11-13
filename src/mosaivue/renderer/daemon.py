@@ -9,6 +9,7 @@ from contextlib import suppress
 from datetime import datetime
 
 from sqlalchemy import select
+from sqlalchemy.orm import Session, sessionmaker
 
 from ..config import load_settings
 from ..db import get_session_factory, init_db
@@ -22,6 +23,47 @@ from .gstreamer import GStreamerRenderer
 from .rpc import RendererRPCServer
 
 LOGGER = logging.getLogger(__name__)
+
+
+async def watch_schedules(
+    controller: RendererController, session_factory: sessionmaker[Session],
+    stop_event: asyncio.Event, *,
+    enabled: bool = True, interval_seconds: float = 30,
+) -> None:
+    if interval_seconds <= 0:
+        raise ValueError("Schedule poll interval must be positive")
+    while not stop_event.is_set():
+        try:
+            if enabled and not controller.focused:
+                with session_factory() as db:
+                    scheduled = select_scheduled_layout(db, datetime.now().astimezone())
+                if scheduled and scheduled != controller.active_layout_id:
+                    await controller.apply_layout(scheduled)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # Temporary SQLite/read errors need the same retry behavior as an
+            # unavailable renderer. They must not silently kill scheduling.
+            LOGGER.exception("Scheduled layout check failed; retrying on the next poll")
+        with suppress(TimeoutError):
+            await asyncio.wait_for(stop_event.wait(), timeout=interval_seconds)
+
+
+async def wait_for_daemon_stop(
+    stop_event: asyncio.Event, tasks: list[asyncio.Task[None]]
+) -> None:
+    """Exit on a failed/stopped essential task so systemd can recover it."""
+    stop_task = asyncio.create_task(stop_event.wait(), name="renderer-stop")
+    try:
+        done, _ = await asyncio.wait([stop_task, *tasks], return_when=asyncio.FIRST_COMPLETED)
+        if not stop_event.is_set():
+            ended = next(task for task in tasks if task in done)
+            if ended.cancelled():
+                raise RuntimeError(f"Renderer background task {ended.get_name()} was cancelled")
+            raise RuntimeError(f"Renderer background task {ended.get_name()} stopped") from ended.exception()
+    finally:
+        stop_task.cancel()
+        await asyncio.gather(stop_task, return_exceptions=True)
 
 
 async def run_daemon() -> None:
@@ -77,8 +119,8 @@ async def run_daemon() -> None:
             "focus_camera": controller.focus_camera,
             "restore_layout": controller.restore_layout,
             "restart_stream": controller.restart_stream,
-            "rotation_next": lambda slot_id: controller.rotate(slot_id, direction=1),
-            "rotation_previous": lambda slot_id: controller.rotate(slot_id, direction=-1),
+            "rotation_next": lambda slot_id: controller.rotate(slot_id, direction=1, manual=True),
+            "rotation_previous": lambda slot_id: controller.rotate(slot_id, direction=-1, manual=True),
             "rotation_pause": lambda group_id: controller.pause_rotation(group_id),
             "rotation_resume": lambda group_id: controller.resume_rotation(group_id),
         }
@@ -89,29 +131,23 @@ async def run_daemon() -> None:
         with suppress(NotImplementedError):
             loop.add_signal_handler(sig, stop_event.set)
 
-    async def schedule_watcher() -> None:
-        while not stop_event.is_set():
-            if settings.schedule_enabled and not controller.focused:
-                with session_factory() as db:
-                    scheduled = select_scheduled_layout(db, datetime.now().astimezone())
-                if scheduled and scheduled != controller.active_layout_id:
-                    try:
-                        await controller.apply_layout(scheduled)
-                    except Exception:
-                        LOGGER.exception("Unable to apply scheduled layout")
-            with suppress(TimeoutError):
-                await asyncio.wait_for(stop_event.wait(), timeout=30)
-
     tasks = [
         asyncio.create_task(server.serve_forever(), name="renderer-rpc"),
-        asyncio.create_task(schedule_watcher(), name="layout-scheduler"),
+        asyncio.create_task(
+            watch_schedules(controller, session_factory, stop_event, enabled=settings.schedule_enabled),
+            name="layout-scheduler",
+        ),
     ]
-    await stop_event.wait()
-    for task in tasks:
-        task.cancel()
-    await asyncio.gather(*tasks, return_exceptions=True)
-    await server.close()
-    await controller.shutdown()
+    try:
+        await wait_for_daemon_stop(stop_event, tasks)
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        try:
+            await server.close()
+        finally:
+            await controller.shutdown()
 
 
 def main() -> None:

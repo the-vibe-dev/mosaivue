@@ -18,6 +18,7 @@ from .base import Rect, RendererBackend, StreamSpec
 from .geometry import choose_stream_profile, normalized_to_pixels
 
 LOGGER = logging.getLogger(__name__)
+MANUAL_ROTATION_READY_TIMEOUT = 8.0
 
 
 @dataclass(slots=True)
@@ -37,6 +38,7 @@ class RendererController:
         output_height: int = 1080,
     ) -> None:
         self.backend = backend
+        self._capabilities = backend.capabilities().to_dict()
         self.session_factory = session_factory
         self.cipher = cipher
         self.output_width = output_width
@@ -240,9 +242,18 @@ class RendererController:
         previous_switch_seconds = 0.0
         try:
             while True:
-                with self.session_factory() as db:
-                    group = db.get(RotationGroup, group_id)
-                    interval = group.interval_seconds if group else 15
+                try:
+                    with self.session_factory() as db:
+                        group = db.get(RotationGroup, group_id)
+                        interval = group.interval_seconds if group else 15
+                except Exception:
+                    self.rotation_failures[slot_id] = self.rotation_failures.get(slot_id, 0) + 1
+                    LOGGER.exception(
+                        "Could not read rotation configuration; retrying in five seconds",
+                        extra={"slot_id": slot_id, "rotation_group_id": group_id},
+                    )
+                    await asyncio.sleep(5)
+                    continue
                 preparing_started = asyncio.get_running_loop().time()
                 if group_id not in self.rotation_paused:
                     try:
@@ -275,7 +286,10 @@ class RendererController:
         except asyncio.CancelledError:
             raise
 
-    async def rotate(self, slot_id: str, *, direction: int = 1, prepare_only: bool = False) -> dict[str, Any]:
+    async def rotate(
+        self, slot_id: str, *, direction: int = 1, prepare_only: bool = False,
+        manual: bool = False,
+    ) -> dict[str, Any]:
         async with self._lock:
             current = self.current_specs.get(slot_id)
             if current is None:
@@ -382,22 +396,42 @@ class RendererController:
                 await asyncio.to_thread(self.backend.prepare_stream, slot_id, replacement)
                 return self.status()
             try:
-                switch = (
-                    self.backend.activate_prepared_stream
-                    if group.preconnect != "off" and group.order_mode not in {"random", "weighted"}
-                    else self.backend.replace_stream
-                )
+                if manual and group.preconnect != "off":
+                    # Previous may target a different camera than the automatic
+                    # next standby. Prepare exactly the requested source and
+                    # retain the current video until the backend confirms it.
+                    await self._prepare_manual_rotation(slot_id, replacement)
+                    switch = self.backend.activate_prepared_stream
+                else:
+                    switch = (
+                        self.backend.activate_prepared_stream
+                        if group.preconnect != "off" and group.order_mode not in {"random", "weighted"}
+                        else self.backend.replace_stream
+                    )
                 await asyncio.to_thread(switch, slot_id, replacement)
             except Exception:
                 # A failed next camera must not permanently block the rest of a
                 # skip-mode sequence. Keep the current video, but try the entry
                 # after the failed camera next time. Hold mode retries it.
-                cursor.index = next_index if group.failure_behavior == "skip" else previous_index
+                cursor.index = (
+                    next_index if group.failure_behavior == "skip" and not manual else previous_index
+                )
                 raise
             cursor.index = next_index
             self.current_specs[slot_id] = replacement
             self.rotation_failures.pop(slot_id, None)
             return self.status()
+
+    async def _prepare_manual_rotation(self, slot_id: str, spec: StreamSpec) -> None:
+        await asyncio.to_thread(self.backend.prepare_stream, slot_id, spec)
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + MANUAL_ROTATION_READY_TIMEOUT
+        while not await asyncio.to_thread(self.backend.prepared_stream_ready, slot_id, spec):
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                await asyncio.to_thread(self.backend.cancel_prepared, slot_id)
+                raise RuntimeError("Requested camera did not become ready; the current camera was kept")
+            await asyncio.sleep(min(0.1, remaining))
 
     async def focus_camera(
         self,
@@ -479,6 +513,7 @@ class RendererController:
                 "focus_auto_restore": bool(self.focus_restore_task),
                 "rotation_slots": list(self.rotation_tasks),
                 "rotation_paused": list(self.rotation_paused),
+                "capabilities": deepcopy(self._capabilities),
             }
         )
         return status

@@ -1,6 +1,7 @@
 """Control-plane regressions. Run only against a disposable, seeded test appliance."""
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import uuid
@@ -12,8 +13,8 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-@pytest.fixture
-def control_page():
+@pytest.fixture(scope="module")
+def authenticated_context():
     sync_playwright = pytest.importorskip("playwright.sync_api").sync_playwright
     base = os.environ["MOSAIVUE_E2E_URL"].rstrip("/")
     with sync_playwright() as playwright:
@@ -22,14 +23,28 @@ def control_page():
         if executable:
             options["executable_path"] = executable
         browser = playwright.chromium.launch(**options)
-        page = browser.new_page(viewport={"width": 1440, "height": 960})
+        context = browser.new_context(viewport={"width": 1440, "height": 960})
+        page = context.new_page()
         page.goto(base, wait_until="domcontentloaded")
         page.locator('[name="username"]').fill(os.environ["MOSAIVUE_E2E_USER"])
         page.locator('[name="password"]').fill(os.environ["MOSAIVUE_E2E_PASSWORD"])
-        page.locator('#login-form button[type="submit"]').click()
+        with page.expect_response("**/api/v1/auth/login") as login:
+            page.locator('#login-form button[type="submit"]').click()
+        assert login.value.status == 200
         page.wait_for_selector(".dashboard-hero")
-        yield page, base
+        page.close()
+        yield context, base
         browser.close()
+
+
+@pytest.fixture
+def control_page(authenticated_context):
+    context, base = authenticated_context
+    page = context.new_page()
+    page.goto(base, wait_until="domcontentloaded")
+    page.wait_for_selector(".dashboard-hero")
+    yield page, base
+    page.close()
 
 
 def test_camera_edit_retains_profiles_and_invalid_form_can_cancel(control_page):
@@ -87,8 +102,9 @@ def test_dirty_layout_navigation_requires_discard(control_page):
     page.locator('[data-nav="/layouts"]').click()
     page.locator('a[href$="/edit"]').first.click()
     page.locator(".canvas-slot").first.click()
-    page.locator('[data-field="label"]').fill("Unsaved browser regression check")
-    page.locator('[data-field="label"]').blur()
+    width = page.locator('[data-geometry="width"]')
+    width.fill(str(float(width.input_value()) * 0.9))
+    width.blur()
     assert "Unsaved changes" in page.locator(".editor-title-block").inner_text()
     page.once("dialog", lambda dialog: dialog.dismiss())
     page.get_by_role("link", name="Back to layouts", exact=True).click()
@@ -112,3 +128,103 @@ def test_onvif_empty_form_cancel_and_mobile_navigation(control_page):
     page.locator('[data-nav="/schedules"]').click()
     page.get_by_role("heading", name="Schedules", exact=True).wait_for()
     assert not errors
+
+
+def test_saved_revision_can_apply_then_reapply_with_reported_renderer_state(control_page):
+    """Exercises UI state using a mocked renderer; does not qualify HDMI playback."""
+    page, base = control_page
+    layouts = page.request.get(f"{base}/api/v1/layouts").json()
+    assert layouts, "Seed a layout first"
+    layout = layouts[0]
+    old_revision = layout["current_revision"]
+    layout["current_revision"] = old_revision + 1
+    layout["active"] = True
+    status = {"state": "RUNNING", "active_layout_id": layout["id"], "active_revision": old_revision, "streams": {}, "focused": False}
+    applied = []
+    page.route("**/api/v1/layouts", lambda route: route.fulfill(json=[layout]))
+    page.route("**/api/v1/renderer/status", lambda route: route.fulfill(json=status))
+
+    def apply(route):
+        applied.append(route.request.method)
+        status["active_revision"] = layout["current_revision"]
+        route.fulfill(json={"layout": layout, "renderer": status})
+
+    page.route(f"**/api/v1/layouts/{layout['id']}/activate", apply)
+    page.locator('[data-nav="/layouts"]').click()
+    row = page.locator(f'[data-layout-id="{layout["id"]}"]')
+    row.locator('[data-layout-activate]').wait_for()
+    assert row.get_attribute("data-display-state") == "pending"
+    button = row.get_by_role("button", name="Apply saved changes", exact=True)
+    assert button.is_enabled()
+    button.click()
+    row.get_by_role("button", name="Reapply", exact=True).wait_for()
+    assert row.get_attribute("data-display-state") == "applied"
+    assert row.get_by_role("button", name="Reapply", exact=True).is_enabled()
+    assert applied == ["POST"]
+
+
+def test_json_import_uses_configuration_route_and_retains_display_warning(control_page):
+    """Intercepts the import API so no existing appliance configuration is replaced."""
+    page, _base = control_page
+    requests = []
+
+    def imported(route):
+        requests.append(route.request.post_data_json)
+        route.fulfill(json={"imported": {"cameras": 1}, "renderer_applied": False, "renderer_warning": "Fixture renderer is offline"})
+
+    page.route("**/api/v1/backup/import", imported)
+    page.locator('[data-nav="/backup"]').click()
+    document = {"format": "mosaivue", "cameras": [{"name": "Fixture camera"}]}
+    page.locator("#restore-file").set_input_files({"name": "configuration.json", "mimeType": "application/json", "buffer": json.dumps(document).encode()})
+    page.get_by_role("heading", name="Import JSON configuration", exact=True).wait_for()
+    assert page.locator('dialog [name="mode"][value="merge"]').is_checked()
+    page.get_by_role("button", name="Validate and import", exact=True).click()
+    page.wait_for_selector("dialog[open]", state="detached")
+    assert "Fixture renderer is offline" in page.locator("#restore-result").inner_text()
+    assert requests == [{"document": document, "merge": True}]
+
+
+def test_unsupported_display_controls_are_disabled_and_explained(control_page):
+    page, _base = control_page
+    page.route("**/api/v1/renderer/status", lambda route: route.fulfill(json={
+        "state": "RUNNING", "backend": "omxplayer", "streams": {},
+        "capabilities": {"name": "omxplayer", "available": True, "feature_support": {
+            "output_selection": False, "refresh_rate": False, "portrait": False,
+            "prevent_blanking": False, "labels": False, "native_size": False,
+        }},
+    }))
+    page.locator('[data-nav="/display"]').click()
+    page.get_by_role("button", name="New profile", exact=True).click()
+    for name in ("output", "refresh", "rotation", "blanking"):
+        assert page.locator(f'dialog [name="{name}"]').is_disabled()
+    assert page.locator('dialog [name="width"]').is_enabled()
+    assert "unsupported or not reported" in page.locator("dialog").inner_text()
+    page.get_by_role("button", name="Cancel", exact=True).click()
+    page.locator('[data-nav="/layouts"]').click()
+    page.locator('a[href$="/edit"]').first.click()
+    page.locator(".canvas-slot").first.click()
+    assert page.locator('[data-field="label"]').is_disabled()
+    assert page.locator('[data-field="aspect_mode"] option[value="native"]').is_disabled()
+    page.set_viewport_size({"width": 390, "height": 844})
+    assert not page.locator("#editor-tile-inspector").is_visible()
+    page.get_by_role("button", name="Tile", exact=True).click()
+    assert page.locator("#editor-tile-inspector").is_visible()
+    assert page.locator('[data-field="label"]').is_disabled()
+    inspector = page.locator("#editor-tile-inspector").bounding_box()
+    selected_tile = page.locator(".canvas-slot.is-selected").bounding_box()
+    assert inspector and selected_tile
+    left = max(inspector["x"], selected_tile["x"])
+    top = max(inspector["y"], selected_tile["y"])
+    right = min(inspector["x"] + inspector["width"], selected_tile["x"] + selected_tile["width"])
+    bottom = min(inspector["y"] + inspector["height"], selected_tile["y"] + selected_tile["height"])
+    assert right - left > 20 and bottom - top > 20
+    assert page.evaluate(
+        "({ x, y }) => Boolean(document.elementFromPoint(x, y)?.closest('#editor-tile-inspector'))",
+        {"x": (left + right) / 2, "y": (top + bottom) / 2},
+    )
+    page.get_by_role("button", name="Close inspector", exact=True).click()
+    assert not page.locator("#editor-tile-inspector").is_visible()
+    page.get_by_role("button", name="Cameras", exact=True).click()
+    assert page.locator("#editor-camera-library").is_visible()
+    page.get_by_role("button", name="Close camera library", exact=True).click()
+    assert not page.locator("#editor-camera-library").is_visible()

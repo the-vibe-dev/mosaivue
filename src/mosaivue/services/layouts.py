@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
 from ..constants import MAX_LAYOUT_REVISIONS
@@ -81,7 +81,13 @@ class LayoutService:
             errors, warnings = self.validate(payload.data)
             if errors:
                 raise LayoutValidationError(errors, warnings)
-            next_revision = layout.current_revision + 1
+            # A restored/exported configuration can intentionally select an
+            # older revision while retaining newer drafts. Never reuse one of
+            # those existing revision numbers when saving or restoring history.
+            newest_revision = self.db.scalar(
+                select(func.max(LayoutRevision.revision)).where(LayoutRevision.layout_id == layout.id)
+            ) or 0
+            next_revision = newest_revision + 1
             revision = LayoutRevision(
                 layout_id=layout.id,
                 revision=next_revision,

@@ -27,7 +27,7 @@ export function rotationEntries(rows: Array<{ cameraId: string; selected: boolea
 
 export function setGeometry(slot: Slot, field: 'x' | 'y' | 'width' | 'height', percent: number): Slot {
   if (!Number.isFinite(percent) || slot.locked) return slot;
-  const next = { ...slot };
+  const next = { ...slot, pixel_override: null };
   const value = Math.max(0, Math.min(1, percent / 100));
   if (field === 'x') next.x = Math.min(value, 1 - next.width);
   if (field === 'y') next.y = Math.min(value, 1 - next.height);

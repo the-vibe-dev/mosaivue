@@ -43,6 +43,7 @@ done
 cw_require_root
 PREFIX="$(cw_validate_install_prefix "$PREFIX")"
 cw_assert_dedicated_prefix "$PREFIX"
+cw_assert_prefix_ancestors "$PREFIX"
 cw_assert_config_entries /etc/mosaivue
 umask 027
 cw_detect_platform
@@ -174,6 +175,10 @@ if ! command -v "$PYTHON_BIN" >/dev/null 2>&1 || ! "$PYTHON_BIN" -c 'import sys;
   PYTHON_BIN="$RUNTIME_DIR/bin/python3.11"
 fi
 PYTHON_BIN="$(command -v "$PYTHON_BIN")"
+BULLSEYE_WHEEL_PLAN=""
+if [[ "$CW_ARCH" == armhf && "$CW_OS_VERSION" == 11 ]]; then
+  BULLSEYE_WHEEL_PLAN="$("$PYTHON_BIN" "$SOURCE_ROOT/scripts/bullseye_wheel_plan.py")"
+fi
 "$PYTHON_BIN" - "$BIND_ADDRESS" <<'PY'
 import ipaddress
 import sys
@@ -197,18 +202,17 @@ install -d -o root -g mosaivue -m 0750 /etc/mosaivue
 # Recheck after removing service-account directory write access, before any
 # privileged file writes or ownership changes during upgrades from old betas.
 cw_assert_config_entries /etc/mosaivue
+cw_assert_prefix_ancestors "$PREFIX"
+install -d -o root -g root -m 0755 "$PREFIX"
+# Lock the dedicated parent before checking an entry inherited from an older
+# or locally owned installation; do not chown through an existing symlink.
+cw_assert_release_directory "$PREFIX"
 install -d -o root -g root -m 0755 "$PREFIX/releases"
 
 cw_log "Staging application release at $RELEASE_DIR"
 rm -rf "$RELEASE_DIR.new"
 install -d -m 0755 "$RELEASE_DIR.new"
-rsync -a --delete \
-  --exclude '.git' --exclude '.venv' --exclude 'frontend/node_modules' --exclude 'frontend/dist' \
-  --exclude '__pycache__' --exclude '.pytest_cache' --exclude '*.pyc' \
-  "$SOURCE_ROOT/" "$RELEASE_DIR.new/"
-# rsync -a copies the source root's mode too. curl/update installers unpack
-# into private mktemp directories, but the service user must traverse releases.
-chmod 0755 "$RELEASE_DIR.new"
+cw_stage_source "$SOURCE_ROOT" "$RELEASE_DIR.new"
 "$PYTHON_BIN" -m venv --system-site-packages "$RELEASE_DIR.new/.venv"
 "$RELEASE_DIR.new/.venv/bin/python" -m pip install --upgrade pip wheel
 if [[ "$CW_ARCH" == armhf && "$CW_OS_VERSION" == 11 ]]; then
@@ -216,21 +220,15 @@ if [[ "$CW_ARCH" == armhf && "$CW_OS_VERSION" == 11 ]]; then
   # Build this small extension against the target image before resolving
   # cryptography; the app install will keep the satisfied version.
   "$RELEASE_DIR.new/.venv/bin/pip" install --no-cache-dir --no-binary=cffi 'cffi==2.1.1'
-  # The piwheels cryptography 50.0.2 wheel links to libssl.so.3, which is
-  # absent on Bullseye. Pin the upstream armv7l wheel with bundled OpenSSL
-  # instead of accepting whichever index wins pip's same-version selection.
-  CRYPTO_WHEEL="$RELEASE_DIR.new/cryptography-50.0.2-cp311-abi3-manylinux_2_31_armv7l.whl"
-  curl -fsSL 'https://files.pythonhosted.org/packages/7c/52/9af10e80ac16b0fcc2123f9cbd5e7afbd0fd5075bb7a607c592258a39cda/cryptography-50.0.2-cp311-abi3-manylinux_2_31_armv7l.whl' -o "$CRYPTO_WHEEL"
-  printf '%s  %s\n' 'ac9ed99d81760c62fe89d5f0815cdfa1ba9a35141cf30f1c2d044f04b4803d2e' "$CRYPTO_WHEEL" | sha256sum -c -
-  "$RELEASE_DIR.new/.venv/bin/pip" install --no-deps "$CRYPTO_WHEEL"
-  rm -f "$CRYPTO_WHEEL"
-  # The piwheels pydantic-core binary also requires glibc 2.34. Use the
-  # upstream manylinux2014 build, which runs on Bullseye's glibc 2.31.
-  PYDANTIC_CORE_WHEEL="$RELEASE_DIR.new/pydantic_core-2.50.4-cp311-cp311-manylinux2014_armv7l.manylinux_2_17_armv7l.whl"
-  curl -fsSL 'https://files.pythonhosted.org/packages/d6/d1/44f541b2c18a46df6f18281a557acefeb5bbf0733a0b80b0a5e835e10ee4/pydantic_core-2.50.4-cp311-cp311-manylinux2014_armv7l.manylinux_2_17_armv7l.whl' -o "$PYDANTIC_CORE_WHEEL"
-  printf '%s  %s\n' '789f88dea57841cdebef392b5d6e90444d767117e9ff2e0d9172df5c9de6690c' "$PYDANTIC_CORE_WHEEL" | sha256sum -c -
-  "$RELEASE_DIR.new/.venv/bin/pip" install --no-deps "$PYDANTIC_CORE_WHEEL"
-  rm -f "$PYDANTIC_CORE_WHEEL"
+  # Keep the upstream, checksum-pinned wheels; select pydantic-core for the
+  # actual interpreter ABI instead of assuming every Bullseye host uses 3.11.
+  while IFS=$'\t' read -r wheel_name wheel_url wheel_checksum; do
+    wheel_path="$RELEASE_DIR.new/$wheel_name"
+    curl -fsSL --connect-timeout 15 --max-time 180 "$wheel_url" -o "$wheel_path"
+    printf '%s  %s\n' "$wheel_checksum" "$wheel_path" | sha256sum -c -
+    "$RELEASE_DIR.new/.venv/bin/pip" install --no-deps "$wheel_path"
+    rm -f "$wheel_path"
+  done <<<"$BULLSEYE_WHEEL_PLAN"
 fi
 if [[ "$DEV" -eq 1 ]]; then
   "$RELEASE_DIR.new/.venv/bin/pip" install -e "$RELEASE_DIR.new"
@@ -372,20 +370,7 @@ fi
 
 rm -rf "$RELEASE_DIR"
 mv "$RELEASE_DIR.new" "$RELEASE_DIR"
-"$PYTHON_BIN" - "$RELEASE_DIR" <<'PY'
-from pathlib import Path
-import sys
-
-release = Path(sys.argv[1])
-staged = f"{release}.new".encode()
-installed = str(release).encode()
-for entry in (release / ".venv" / "bin").iterdir():
-    if entry.is_symlink() or not entry.is_file():
-        continue
-    contents = entry.read_bytes()
-    if staged in contents:
-        entry.write_bytes(contents.replace(staged, installed))
-PY
+"$PYTHON_BIN" "$RELEASE_DIR/scripts/relocate_venv.py" "$RELEASE_DIR"
 ln -sfn "$RELEASE_DIR" "$PREFIX/current.new"
 mv -Tf "$PREFIX/current.new" "$PREFIX/current"
 CURRENT_CHANGED=1
@@ -448,13 +433,11 @@ if [[ "$NO_START" -eq 0 ]]; then
   # so the web service's ReadWritePaths mount exists when its namespace starts.
   systemctl restart mosaivue-renderer.service
   systemctl restart mosaivue-server.service
-  HEALTH_HOST="$(jq -r '.bind' /etc/mosaivue/config.json)"
-  [[ "$HEALTH_HOST" == 0.0.0.0 || "$HEALTH_HOST" == :: ]] && HEALTH_HOST=127.0.0.1
-  [[ "$HEALTH_HOST" == *:* ]] && HEALTH_HOST="[$HEALTH_HOST]"
+  HEALTH_HOST="$(cw_health_host "$(jq -r '.bind' /etc/mosaivue/config.json)")"
   HEALTH_PORT="$(jq -r '.port' /etc/mosaivue/config.json)"
   HEALTH_READY=0
   for attempt in $(seq 1 120); do
-    if curl -fsS --max-time 2 "http://$HEALTH_HOST:$HEALTH_PORT/healthz" >/dev/null 2>&1; then
+    if curl -fsS --noproxy '*' --max-time 2 "http://$HEALTH_HOST:$HEALTH_PORT/healthz" >/dev/null 2>&1; then
       HEALTH_READY=1
       break
     fi

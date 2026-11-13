@@ -13,6 +13,10 @@ from ..constants import RENDERER_SOCKET_PATH
 
 LOGGER = logging.getLogger(__name__)
 RPC_MESSAGE_LIMIT = 1024 * 1024
+MUTATING_ACTIONS = {
+    "apply_layout", "focus_camera", "restore_layout", "restart_stream",
+    "rotation_next", "rotation_previous",
+}
 
 
 class RendererRPCError(RuntimeError):
@@ -20,9 +24,13 @@ class RendererRPCError(RuntimeError):
 
 
 class RendererRPCClient:
-    def __init__(self, socket_path: Path = RENDERER_SOCKET_PATH, timeout: float = 10.0):
+    def __init__(
+        self, socket_path: Path = RENDERER_SOCKET_PATH, timeout: float = 10.0,
+        operation_timeout: float = 60.0,
+    ):
         self.socket_path = socket_path
         self.timeout = timeout
+        self.operation_timeout = operation_timeout
 
     async def call(self, action: str, **params: Any) -> Any:
         try:
@@ -36,7 +44,8 @@ class RendererRPCClient:
             request = json.dumps({"action": action, "params": params}, separators=(",", ":")) + "\n"
             writer.write(request.encode("utf-8"))
             await asyncio.wait_for(writer.drain(), timeout=self.timeout)
-            raw = await asyncio.wait_for(reader.readline(), timeout=self.timeout)
+            response_timeout = self.operation_timeout if action in MUTATING_ACTIONS else self.timeout
+            raw = await asyncio.wait_for(reader.readline(), timeout=response_timeout)
             if not raw:
                 raise RendererRPCError("Renderer closed the connection without a response")
             response = json.loads(raw)

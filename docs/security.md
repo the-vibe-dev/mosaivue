@@ -1,6 +1,6 @@
 # Security design and boundaries
 
-This describes the **0.1.0b3 review candidate**. Software regression tests cover the stated corrections; they do not constitute a complete penetration test or new hardware qualification.
+This describes the **0.1.0b4 review candidate**. Software regression tests cover the stated corrections; they do not constitute a complete penetration test or new hardware qualification.
 
 ## Authentication
 
@@ -18,7 +18,7 @@ Saved camera passwords are not returned by camera API responses. The saved usern
 
 **P1 remaining gap: complete stream-URI confidentiality.** Vendor bearer tokens embedded in opaque URL paths or query parameters remain in the stored URI and can appear in camera API output or configuration exports. Encrypting a camera password does not encrypt those URI components. Named sensitive query parameters are redacted in diagnostics, but arbitrary vendor path tokens cannot be identified reliably. Full-URI encryption or explicit modeling of every credential-bearing component remains required before promising protection of all stream secrets. Treat tokenized URLs and exports containing them as credentials.
 
-The legacy OMXPlayer backend passes the resolved stream URL as a process argument. Local process-inspection access may expose credentials. GStreamer holds the resolved URL in memory. Root and the dedicated service account can access sensitive runtime state and the master key; encryption at rest does not remove those exposures.
+The legacy OMXPlayer backend and FFmpeg thumbnail fallback pass the resolved stream URL as a process argument. Local process-inspection access may expose credentials. GStreamer holds the resolved URL in memory. Root and the dedicated service account can access sensitive runtime state and the master key; encryption at rest does not remove those exposures.
 
 ## Backup scope and restore
 
@@ -56,8 +56,12 @@ The candidate installer protects `/etc/mosaivue` as `root:mosaivue` with mode `0
 
 Update/removal scripts check root-consumed metadata ownership and write permissions. Installer paths must be dedicated supported application locations, and privileged writes reject unsafe link entries. Use the **new local source installer** when upgrading an older installation with unsafe metadata permissions; the new updater intentionally rejects metadata it cannot trust. These checks do not establish that a previously compromised host is trustworthy.
 
+The b4 staging copy explicitly assigns root ownership and strips group/other write and special permission bits while preserving executable/read/traverse access. This prevents a trusted checkout's original owner from remaining able to replace installed privileged helpers after installation. Initial source and custom Python interpreters must still be trusted. The real ownership-transfer regression requires root and rsync and is retained for privileged CI/appliance acceptance; it was not executed in this review environment.
+
 ## Logs, diagnostics and further work
 
 Structured logs redact URL userinfo and named sensitive query values. Support bundles contain versions, hardware/display/codec information, sanitized camera configuration and recent logs. They can still disclose internal hostnames, addresses and opaque URL tokens; inspect the archive before sharing it.
 
-The candidate lacks a complete audit-log workflow, appliance-wide preview concurrency budgets and full typed settings validation. Continue updating camera firmware, multimedia libraries and decoder drivers. The [review report](review/report.md), [validation record](review/validation.md) and [roadmap](../ROADMAP.md) distinguish completed work from these outstanding items.
+Known settings now have typed, backwards-compatible validation; invalid values receive field-specific errors without echoing their contents. Atomic settings/renderer-selection writes preserve permitted owner/group access. The API bounds preview/probe decoding per process and checks authentication, camera state and preview policy before using its short image cache. These controls do not limit custom multiple-process deployments or the number of identical waiting HTTP clients.
+
+A complete audit-log workflow, account roles, scoped integration tokens and full stream-URI encryption remain outstanding. Continue updating camera firmware, multimedia libraries and decoder drivers. The [current review](review/current-report.md), [validation record](review/current-validation.md) and [roadmap](../ROADMAP.md) distinguish completed work from remaining items.
