@@ -62,11 +62,27 @@ decoder can increase CPU use. `MOSAIVUE_ROTATION_SOFTWARE_DECODE=1` remains an
 emergency override if an older installation has no saved policy. A new install
 selects software rotation automatically when its probe passes.
 
+The decoder probe uses a short synthetic stream; passing it does not prove a
+full physical wall works with that decoder. If a fixed GStreamer tile receives
+no first frame after 20 seconds, the renderer retries that slot with a locally
+probed software decoder where one exists. Once real frames arrive, it saves
+that working fixed-decoder choice. A later installer re-probe retains the
+verified software choice if it still passes, instead of silently switching
+back to hardware. Camera/network failures can also cause first-frame delays,
+so review per-slot status and CPU load after a fallback.
+
 ## Sink selection
 
 `auto` evaluates the Pi model and installed players before GStreamer plugins.
 GStreamer sink candidates include KMS/DRM, GL, Wayland, X11, and framebuffer.
 `mosaivue doctor` records available elements rather than assuming they exist.
+For `kmssink`, Mosaivue requests its fullscreen output plane so the completed
+compositor canvas fills the active connector mode. This was measured on the
+ROCK Pi 4B+: the default centered a 1920×1080 wall inside a 1920×810 plane,
+while `fullscreen=true` produced a 1920×1080 plane and survived a reboot.
+Disabling `force-aspect-ratio` made the plane disappear on that driver and is
+not used. Confirm the actual KMS plane and visible monitor after installation;
+LIVE camera states alone do not establish physical output.
 
 Explicit configuration:
 

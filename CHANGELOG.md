@@ -17,6 +17,7 @@ Built from the newly supplied b3 archive. No database migration was added. Pytho
 ### Fixed
 
 - The phone-sized Tile inspector now stacks above selected canvas tiles, so its controls remain usable.
+- The ROCK Pi KMS sink now requests a fullscreen video plane at each renderer start, filling the connected mode without disabling aspect preservation. A fixed GStreamer tile with no first frame can retry a locally probed software decoder; successful real-frame fallback is saved and retained across installer re-probes.
 - Manual Previous/Next prepares the actual requested standby and preserves the current source/cursor on readiness failure.
 - OMX spawn failures no longer kill shared recovery; scheduler/rotation database failures retry; essential daemon tasks are supervised.
 - Long renderer mutations have a separate response budget; capability/settings JSON replacement is atomic.
