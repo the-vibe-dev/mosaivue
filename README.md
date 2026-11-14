@@ -12,7 +12,16 @@ Mosaivue is designed for Raspberry Pi OS Lite and does not require a desktop ses
 
 > **Published baseline (0.1.0b2):** v0.1.0b2 is the first public beta. In a 23-hour sample window, the tested Pi 3B+, ROCK Pi 4B+, and Ubuntu GPU walls each kept seven of seven tiles LIVE with one renderer process and advancing rotation. The ROCK Pi's installer-managed 640×360 normalization kept its two 16:9 rotating feeds on matching caps through more than 5,500 cuts; one fixed tile recovered from a cold-start retry. These are site results, not stream-count guarantees. Other camera aspect ratios and Raspberry Pi 4/5 physical output remain unqualified. See [beta notes](docs/beta-release.md).
 
-## What is included
+Mosaivue is a work-in-progress open-source project. TideCore is not currently selling it as a software product, subscription or commercial package. The existing Apache-2.0 permissions and notices remain in effect.
+
+## Release and source status
+
+| Track | Status | Documentation |
+| --- | --- | --- |
+| v0.1.0b2 | Released public beta | [Versioned README](https://github.com/the-vibe-dev/mosaivue/blob/v0.1.0b2/README.md) and the pinned archive install below. |
+| main / 0.1.0b5 | Development candidate | This README and BUILD-VERIFICATION.md describe candidate behavior; this is not a published b5 release. |
+
+## Features in the b5 development candidate
 
 - Persistent camera registry with stable multiple RTSP profiles per camera, plus ONVIF Media1 profile import from a known device-service endpoint
 - Camera passwords encrypted at rest with AES-256-GCM and omitted from camera API responses. Usernames remain available to authenticated administrators; sanitized exports omit username/password fields. Opaque secrets inside stream URLs are a separate unresolved boundary. The legacy OMXPlayer backend passes a resolved stream URL to its local player process; see [security boundaries](docs/security.md).
@@ -54,6 +63,8 @@ These retained screenshots illustrate earlier interface builds. They were not re
 
 ![Mosaivue phone remote for changing layouts and focusing a camera](docs/images/remote-mobile.png)
 
+Screenshot labels: retained interface builds, **not b5 screenshots**. Regenerate and label the exact source version before using new images as release evidence.
+
 Regenerate these from a demo or test appliance with:
 
 ```bash
@@ -78,15 +89,20 @@ Mosaivue never hard-codes a stream-count promise. Run `mosaivue benchmark` and f
 
 ## Clean installation
 
-For the public beta, download the bootstrap installer and run it:
+For the released **v0.1.0b2 public beta**, download the versioned source archive, check its checksum, inspect it and install on a supported test appliance:
 
 ```bash
-sudo apt-get update && sudo apt-get install -y curl ca-certificates && curl -fsSLo mosaivue-install.sh https://raw.githubusercontent.com/the-vibe-dev/mosaivue/main/install.sh && sudo bash mosaivue-install.sh
+curl -fLO https://github.com/the-vibe-dev/mosaivue/releases/download/v0.1.0b2/mosaivue-0.1.0b2-source.tar.gz
+curl -fLO https://github.com/the-vibe-dev/mosaivue/releases/download/v0.1.0b2/mosaivue-0.1.0b2-source.tar.gz.sha256
+sha256sum -c mosaivue-0.1.0b2-source.tar.gz.sha256
+tar -xzf mosaivue-0.1.0b2-source.tar.gz
+cd mosaivue-0.1.0b2
+sudo bash installer/install-local.sh
 ```
 
-It downloads a versioned source release, verifies its SHA-256 checksum, and runs the local installer. The automatic installer supports Debian and Raspberry Pi OS 12+, Ubuntu 24.04+, and legacy 32-bit Raspberry Pi OS 11 with an existing OMXPlayer installation. It needs `sudo`, internet access for packages, and a systemd host. See [installation requirements and rollback](docs/install.md).
+These fixed URLs install b2, even when `main` changes. The published checksum detects a mismatched download; it is not a separate signing or trust authority. Read the scripts before running them with `sudo`. The automatic installer supports Debian and Raspberry Pi OS 12+, Ubuntu 24.04+, and legacy 32-bit Raspberry Pi OS 11 with an existing OMXPlayer installation. It needs `sudo`, internet access for packages, and a systemd host. See [installation requirements and rollback](docs/install.md).
 
-To install a source archive directly:
+To evaluate the **0.1.0b5 development candidate** from a separately obtained b5 source archive:
 
 ```bash
 tar -xzf mosaivue-0.1.0b5-source.tar.gz
@@ -116,7 +132,7 @@ Mosaivue installed successfully.
   Diagnostics:  mosaivue doctor
 ```
 
-The online bootstrap downloads the newest published release, which may be older than this review candidate. Use the local source command above to install this candidate.
+The standalone bootstrap can select a newer published release and is intentionally not the reproducible b2 path above. Use the local b5 source instructions only when you deliberately want the development candidate; b2 hardware observations do not qualify b5.
 
 The bootstrap script can be inspected before the `sudo bash` step. It downloads the newest public release archive and checks its SHA-256 checksum before installing.
 
@@ -239,6 +255,10 @@ sudo mosaivue uninstall
 ```
 
 Application files are removed, while configuration and the database are preserved unless you explicitly choose to delete them. Non-interactive purge is available as `sudo ./uninstall.sh --purge`.
+
+## Support and contributions
+
+For reproducible setup or behavior problems, use [GitHub Issues](https://github.com/the-vibe-dev/mosaivue/issues). Include the exact release/commit, OS, renderer and sanitized diagnostics; do not publish camera credentials. Report sensitive issues using [SECURITY.md](SECURITY.md). Read [CONTRIBUTING.md](CONTRIBUTING.md) before proposing code, documentation or hardware reports. Community support has no guaranteed response time.
 
 ## License
 

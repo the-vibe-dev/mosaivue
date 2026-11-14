@@ -19,15 +19,20 @@ over the base config file.
 
 ## Curl install
 
-For the public beta, run this on the target device:
+For the released **v0.1.0b2 public beta**, install download prerequisites (`curl` and `ca-certificates`) if needed, then use the versioned release on the target device:
 
 ```bash
-sudo apt-get update && sudo apt-get install -y curl ca-certificates && curl -fsSLo mosaivue-install.sh https://raw.githubusercontent.com/the-vibe-dev/mosaivue/main/install.sh && sudo bash mosaivue-install.sh
+curl -fLO https://github.com/the-vibe-dev/mosaivue/releases/download/v0.1.0b2/mosaivue-0.1.0b2-source.tar.gz
+curl -fLO https://github.com/the-vibe-dev/mosaivue/releases/download/v0.1.0b2/mosaivue-0.1.0b2-source.tar.gz.sha256
+sha256sum -c mosaivue-0.1.0b2-source.tar.gz.sha256
+tar -xzf mosaivue-0.1.0b2-source.tar.gz
+cd mosaivue-0.1.0b2
+sudo bash installer/install-local.sh
 ```
 
-The command installs the download prerequisites first. The bootstrap then supplies Python if the image lacks it, downloads the newest published Mosaivue source release, verifies its SHA-256 checksum, installs the remaining dependencies, and starts the appliance. It prints the local setup URL and one-time administrator token. For an offline archive, use the local source install below.
+The fixed release URLs select b2 rather than the newest release or the b5 development candidate. Stop if the checksum fails. Inspect the extracted scripts before running them as root. The local installer installs dependencies and prints the setup URL and one-time administrator token. A checksum detects a mismatched download; it is not an independent signature.
 
-## Native appliance install
+## Development candidate from a local source archive
 
 ```bash
 tar -xzf mosaivue-0.1.0b5-source.tar.gz
