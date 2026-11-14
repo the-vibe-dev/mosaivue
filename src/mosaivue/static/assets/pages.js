@@ -1,9 +1,10 @@
-import { api, download } from './api.js';
+import { api, download, layoutRevisionConflict } from './api.js';
 import { renderBackup } from './backup.js';
 import { LayoutEditor } from './editor.js';
 import { renderDisplay } from './display.js';
 import { featureDescription, featureSupport, layoutDisplayState, rendererFeatures } from './display-state.js';
 import { newId } from './ids.js';
+import { bindLayoutOutputFields, layoutOutputFields, resolveLayoutOutput } from './layout-output.js';
 import { credentialEdit, filterCameras, mergeProfileEdit, rotationEntries } from './forms.js';
 import { onvifDialog } from './onvif.js';
 import { renderSchedules } from './schedules.js';
@@ -39,16 +40,18 @@ export async function dashboardPage() {
     const root = content();
     root.innerHTML = pageHeader('Dashboard', 'Live health and appliance overview', `<a class="button button-primary" href="/layouts" data-route>${icon('layout')} Open layouts</a>`) + skeleton(5);
     try {
-        const [status, layouts, cameras, rendererConfig] = await Promise.all([
+        const [status, layouts, cameras, rendererConfig, displayProfiles] = await Promise.all([
             api('/system/status'),
             api('/layouts'),
             api('/cameras'),
             api('/renderer/config'),
+            api('/display/profiles'),
         ]);
         const backendLabels = { auto: 'Automatic', omxplayer: 'OMXPlayer (legacy Pi)', gstreamer: 'GStreamer (modern)' };
         const backendOptions = rendererConfig.options.map((option) => `<option value="${escapeHtml(option.name)}" ${option.name === rendererConfig.selected ? 'selected' : ''} ${!option.available ? 'disabled' : ''}>${escapeHtml(backendLabels[option.name] ?? option.name)}${option.available ? '' : ' — unavailable'}</option>`).join('');
         const active = layouts.find((item) => item.id === status.renderer.active_layout_id);
-        const display = active ? layoutDisplayState(active, status.renderer) : null;
+        const activeOutput = resolveLayoutOutput(active?.revision?.data, active?.display_profile_id, displayProfiles, status.renderer);
+        const display = active ? layoutDisplayState(active, status.renderer, activeOutput) : null;
         const streams = Object.values(status.renderer.streams ?? {});
         const live = streams.filter((item) => item.state === 'LIVE').length;
         const failed = streams.filter((item) => !['LIVE', 'CONNECTING'].includes(item.state)).length;
@@ -65,7 +68,7 @@ export async function dashboardPage() {
             <a href="/remote" data-route class="button button-ghost">${icon('remote')} Remote control</a>
           </div>
         </div>
-        <div class="wall-preview" aria-label="Saved layout illustration">
+        <div class="wall-preview" aria-label="Saved layout illustration" style="aspect-ratio:${activeOutput.width}/${activeOutput.height}">
           ${!status.renderer.focused && display?.kind === 'applied' ? active?.revision?.data.slots.slice(0, 8).map((slot) => {
             const camera = cameras.find((item) => item.id === (slot.selected_camera_id ?? slot.camera_id));
             const health = status.renderer.streams?.[slot.id];
@@ -323,31 +326,35 @@ export async function layoutsPage() {
     const root = content();
     root.innerHTML = pageHeader('Layouts', 'Reusable display arrangements with safe revision history', `<button class="button button-primary" id="create-layout">${icon('plus')} New layout</button>`) + skeleton(4);
     const refresh = async () => {
-        const [layouts, cameras, renderer] = await Promise.all([api('/layouts'), api('/cameras'), api('/renderer/status').catch(() => null)]);
+        const [layouts, cameras, renderer, displayProfiles] = await Promise.all([api('/layouts'), api('/cameras'), api('/renderer/status').catch(() => null), api('/display/profiles')]);
         root.innerHTML = `${pageHeader('Layouts', 'Reusable display arrangements with safe revision history', `<button class="button button-primary" id="create-layout">${icon('plus')} New layout</button>`)}
-      <p class="display-notice">Save draft stores a revision. Apply sends the latest saved revision and camera settings to the renderer; stream health confirms playback separately. Reapply restarts streams and ends focus. Enabled schedules can replace a manually applied layout.</p>
+      <p class="display-notice">Save draft stores a revision. Apply sends the saved revision shown here and current camera settings to the renderer; stream health confirms playback separately. If another client changes that revision, refresh before applying. Reapply restarts streams and ends focus. Enabled schedules can replace a manually applied layout.</p>
       <div class="layout-list">${layouts.length ? layouts.map((layout) => {
             const slots = layout.revision?.data.slots ?? [];
-            const display = layoutDisplayState(layout, renderer);
+            const output = resolveLayoutOutput(layout.revision?.data, layout.display_profile_id, displayProfiles, renderer);
+            const display = layoutDisplayState(layout, renderer, output);
             return `<article class="layout-row ${display.kind === 'applied' ? 'is-active' : ''}" data-layout-id="${layout.id}" data-display-state="${display.kind}">
-          <div class="mini-layout" style="background:${escapeHtml(layout.revision?.data.background ?? '#05080c')}">${slots.slice(0, 12).map((slot) => `<i style="left:${slot.x * 100}%;top:${slot.y * 100}%;width:${slot.width * 100}%;height:${slot.height * 100}%"></i>`).join('')}</div>
+          <div class="mini-layout" style="aspect-ratio:${output.width}/${output.height};background:${escapeHtml(layout.revision?.data.background ?? '#05080c')}">${slots.slice(0, 12).map((slot) => `<i style="left:${slot.x * 100}%;top:${slot.y * 100}%;width:${slot.width * 100}%;height:${slot.height * 100}%"></i>`).join('')}</div>
           <div class="layout-row-main"><div class="layout-name-line"><h2>${escapeHtml(layout.name)}</h2>${badge(display.label, display.tone)}</div><p>${escapeHtml(layout.description || 'No description')}</p><span>${slots.length} slots · saved revision ${layout.current_revision} · updated ${new Date(layout.updated_at).toLocaleString()}</span><p class="layout-display-detail">${escapeHtml(display.detail)}</p></div>
           <div class="layout-row-actions"><button class="button button-ghost" data-layout-activate="${layout.id}">${icon('play')} ${display.action}</button><a class="button button-secondary" href="/layouts/${layout.id}/edit" data-route>${icon('edit')} Edit</a><button class="icon-button" data-layout-duplicate="${layout.id}" title="Duplicate layout" aria-label="Duplicate ${escapeHtml(layout.name)}">${icon('copy')}</button><button class="icon-button" data-layout-revisions="${layout.id}" title="Revision history">${icon('logs')}</button><button class="icon-button" data-layout-delete="${layout.id}" title="Delete" ${layout.active ? 'disabled' : ''}>${icon('trash')}</button></div>
         </article>`;
         }).join('') : emptyState('layout', 'No layouts yet', 'Create a visual layout, drag cameras into place, and apply it without rebooting.', `<button class="button button-primary" id="empty-create-layout">${icon('plus')} Create layout</button>`)}</div>`;
-        const create = () => createLayoutDialog(cameras, refresh);
+        const create = () => createLayoutDialog(cameras, displayProfiles, renderer, refresh);
         root.querySelector('#create-layout')?.addEventListener('click', create);
         root.querySelector('#empty-create-layout')?.addEventListener('click', create);
         root.querySelectorAll('[data-layout-activate]').forEach((button) => button.addEventListener('click', async () => {
             button.disabled = true;
+            const target = layouts.find((layout) => layout.id === button.dataset.layoutActivate);
             try {
-                await api(`/layouts/${button.dataset.layoutActivate}/activate`, { method: 'POST' });
-                toast('Saved layout applied; check stream health for playback', 'success');
+                await api(`/layouts/${target.id}/activate`, { method: 'POST', body: JSON.stringify({ expected_revision: target.current_revision, expected_revision_id: target.revision?.id }) });
+                toast('Selected saved revision applied; check stream health for playback', 'success');
                 await refresh();
             }
             catch (error) {
                 toast(errorMessage(error), 'error');
                 button.disabled = false;
+                if (layoutRevisionConflict(error))
+                    await refresh();
             }
         }));
         root.querySelectorAll('[data-layout-delete]').forEach((button) => button.addEventListener('click', async () => {
@@ -384,10 +391,12 @@ export async function layoutsPage() {
         root.innerHTML += emptyState('offline', 'Unable to load layouts', errorMessage(error));
     }
 }
-function createLayoutDialog(cameras, refresh) {
+function createLayoutDialog(cameras, profiles, renderer, refresh) {
+    const initialOutput = { output_width: 1920, output_height: 1080 };
+    let readOutput;
     const dialog = openDialog({
         title: 'Create layout',
-        body: `<div class="form-grid"><label><span>Name</span><input class="input" name="name" required placeholder="Main" /></label><label><span>Description</span><textarea class="textarea" name="description" placeholder="Primary camera wall"></textarea></label><fieldset><legend>Starting point</legend><div class="template-choice"><label><input type="radio" name="template" value="empty" checked /><span>Empty canvas</span></label>${Array.from({ length: 9 }, (_, index) => `<label><input type="radio" name="template" value="${index + 2}" /><span>${index + 2} cameras · featured first</span></label>`).join('')}${[2, 3, 4].map((size) => `<label><input type="radio" name="template" value="grid-${size}" /><span>${size} × ${size} even grid</span></label>`).join('')}</div></fieldset></div>`,
+        body: `<div class="form-grid"><label><span>Name</span><input class="input" name="name" required placeholder="Main" /></label><label><span>Description</span><textarea class="textarea" name="description" placeholder="Primary camera wall"></textarea></label>${layoutOutputFields(initialOutput, null, profiles)}<fieldset><legend>Starting point</legend><div class="template-choice"><label><input type="radio" name="template" value="empty" checked /><span>Empty canvas</span></label>${Array.from({ length: 9 }, (_, index) => `<label><input type="radio" name="template" value="${index + 2}" /><span>${index + 2} cameras · featured first</span></label>`).join('')}${[2, 3, 4].map((size) => `<label><input type="radio" name="template" value="grid-${size}" /><span>${size} × ${size} even grid</span></label>`).join('')}</div></fieldset></div>`,
         submitLabel: 'Create and edit',
         onSubmit: async (modal) => {
             const name = modal.querySelector('[name="name"]').value.trim();
@@ -398,8 +407,11 @@ function createLayoutDialog(cameras, refresh) {
                 return false;
             }
             const data = initialLayoutData(template, cameras);
+            const output = readOutput();
+            data.output_width = output.output_width;
+            data.output_height = output.output_height;
             try {
-                const layout = await api('/layouts', { method: 'POST', body: JSON.stringify({ name, description, data }) });
+                const layout = await api('/layouts', { method: 'POST', body: JSON.stringify({ name, description, display_profile_id: output.display_profile_id, data }) });
                 await refresh();
                 navigate(`/layouts/${layout.id}/edit`);
                 return true;
@@ -410,6 +422,7 @@ function createLayoutDialog(cameras, refresh) {
             }
         },
     });
+    readOutput = bindLayoutOutputFields(dialog, initialOutput, profiles, renderer);
     dialog.querySelector('[name="name"]')?.focus();
 }
 function initialLayoutData(template, cameras) {
@@ -423,11 +436,11 @@ function initialLayoutData(template, cameras) {
 }
 async function revisionDialog(layoutId, refresh) {
     try {
-        const revisions = await api(`/layouts/${layoutId}/revisions`);
-        const dialog = openDialog({ title: 'Revision history', body: `<div class="revision-list">${revisions.map((revision) => `<div><span><strong>Revision ${revision.revision}</strong><small>${new Date(revision.created_at).toLocaleString()} · ${escapeHtml(revision.status)}</small></span><button class="button button-ghost button-small" data-restore-revision="${revision.revision}">Restore</button></div>`).join('')}</div>` });
+        const [revisions, current] = await Promise.all([api(`/layouts/${layoutId}/revisions`), api(`/layouts/${layoutId}`)]);
+        const dialog = openDialog({ title: 'Revision history', body: `<p class="form-help">Restore tile data and layout dimensions as a new draft. The current name, description and display-profile assignment are retained.</p><div class="revision-list">${revisions.map((revision) => `<div><span><strong>Revision ${revision.revision}</strong><small>${new Date(revision.created_at).toLocaleString()} · ${escapeHtml(revision.status)}</small></span><button class="button button-ghost button-small" data-restore-revision="${revision.revision}">Restore</button></div>`).join('')}</div>` });
         dialog.querySelectorAll('[data-restore-revision]').forEach((button) => button.addEventListener('click', async () => {
             try {
-                await api(`/layouts/${layoutId}/revisions/${button.dataset.restoreRevision}/restore`, { method: 'POST' });
+                await api(`/layouts/${layoutId}/revisions/${button.dataset.restoreRevision}/restore`, { method: 'POST', body: JSON.stringify({ expected_revision: current.current_revision, expected_revision_id: current.revision?.id }) });
                 toast('Revision restored as a new draft', 'success');
                 dialog.close();
                 await refresh();
@@ -446,11 +459,11 @@ export async function layoutEditorPage(layoutId) {
     const root = content();
     root.innerHTML = skeleton(6);
     try {
-        const [layout, cameras, groups, renderer] = await Promise.all([api(`/layouts/${layoutId}`), api('/cameras'), api('/rotation-groups'), api('/renderer/status').catch(() => null)]);
+        const [layout, cameras, groups, renderer, profiles] = await Promise.all([api(`/layouts/${layoutId}`), api('/cameras'), api('/rotation-groups'), api('/renderer/status').catch(() => null), api('/display/profiles')]);
         if (!root.isConnected)
             return;
         root.innerHTML = '';
-        activeEditor = new LayoutEditor(root, layout, cameras, groups, undefined, renderer);
+        activeEditor = new LayoutEditor(root, layout, cameras, groups, undefined, renderer, profiles);
         activeEditor.mount();
         document.body.classList.add('editor-mode');
     }
@@ -663,11 +676,12 @@ export async function remotePage() {
     const root = content();
     root.innerHTML = pageHeader('Display remote', 'Fast layout and camera controls for a phone or tablet') + skeleton(4);
     try {
-        const [layouts, cameras, status] = await Promise.all([api('/layouts'), api('/cameras'), api('/renderer/status')]);
+        const [layouts, cameras, status, profiles] = await Promise.all([api('/layouts'), api('/cameras'), api('/renderer/status'), api('/display/profiles')]);
         root.innerHTML = `<div class="remote-shell"><header><div><img class="brand-mark small" src="/brand/mosaivue-icon.png" alt="" /><span><strong>Mosaivue remote</strong><small>${escapeHtml(status.state)}${status.focused ? ' · camera focus active' : ''}</small></span></div><a href="/" data-route class="icon-button" aria-label="Back to dashboard">${icon('close')}</a></header>
-      <section><h1>Layouts</h1><p class="display-notice">Apply uses the latest saved revision and ends focus. Reapply reloads saved camera settings. Enabled schedules can replace a manually applied wall.</p><div class="remote-layouts">${layouts.map((layout) => {
-            const display = layoutDisplayState(layout, status);
-            return `<button data-remote-layout="${layout.id}" data-display-state="${display.kind}" class="${display.kind === 'applied' ? 'is-active' : ''}"><span class="mini-layout">${(layout.revision?.data.slots ?? []).slice(0, 8).map((slot) => `<i style="left:${slot.x * 100}%;top:${slot.y * 100}%;width:${slot.width * 100}%;height:${slot.height * 100}%"></i>`).join('')}</span><strong>${escapeHtml(layout.name)}</strong><small>${escapeHtml(display.label)} · ${display.action}</small></button>`;
+      <section><h1>Layouts</h1><p class="display-notice">Apply uses the saved revision shown here and ends focus. A conflicting change requires refreshing first. Reapply reloads saved camera settings. Enabled schedules can replace a manually applied wall.</p><div class="remote-layouts">${layouts.map((layout) => {
+            const output = resolveLayoutOutput(layout.revision?.data, layout.display_profile_id, profiles, status);
+            const display = layoutDisplayState(layout, status, output);
+            return `<button data-remote-layout="${layout.id}" data-display-state="${display.kind}" class="${display.kind === 'applied' ? 'is-active' : ''}"><span class="mini-layout" style="aspect-ratio:${output.width}/${output.height}">${(layout.revision?.data.slots ?? []).slice(0, 8).map((slot) => `<i style="left:${slot.x * 100}%;top:${slot.y * 100}%;width:${slot.width * 100}%;height:${slot.height * 100}%"></i>`).join('')}</span><strong>${escapeHtml(layout.name)}</strong><small>${escapeHtml(display.label)} · ${display.action}</small></button>`;
         }).join('')}</div></section>
       <section><div class="remote-section-head"><h1>Focus camera</h1><button class="button button-ghost" id="restore-layout" ${status.focused ? '' : 'disabled'}>Restore previous wall</button></div><p class="form-help">Restore previous wall returns to the revision used before focus. Apply a layout above to use its latest saved revision.</p><div class="remote-cameras">${cameras.filter((camera) => camera.enabled).map((camera) => `<button data-focus-camera="${camera.id}"><span>${icon('camera')}</span><strong>${escapeHtml(camera.name)}</strong><small>${escapeHtml(camera.location ?? '')}</small></button>`).join('')}</div></section></div>`;
         const run = async (button, path, body, message) => {
@@ -681,9 +695,14 @@ export async function remotePage() {
             catch (error) {
                 toast(errorMessage(error), 'error');
                 button.disabled = false;
+                if (layoutRevisionConflict(error) && root.isConnected)
+                    await remotePage();
             }
         };
-        root.querySelectorAll('[data-remote-layout]').forEach((button) => button.addEventListener('click', () => void run(button, `/layouts/${button.dataset.remoteLayout}/activate`, undefined, 'Saved layout applied; check stream health for playback')));
+        root.querySelectorAll('[data-remote-layout]').forEach((button) => button.addEventListener('click', () => {
+            const layout = layouts.find((item) => item.id === button.dataset.remoteLayout);
+            void run(button, `/layouts/${layout.id}/activate`, { expected_revision: layout.current_revision, expected_revision_id: layout.revision?.id }, 'Selected saved revision applied; check stream health for playback');
+        }));
         root.querySelectorAll('[data-focus-camera]').forEach((button) => button.addEventListener('click', () => void run(button, '/renderer/focus', { camera_id: button.dataset.focusCamera, aspect_mode: 'cover' }, 'Camera focus applied')));
         const restore = root.querySelector('#restore-layout');
         restore.addEventListener('click', () => void run(restore, '/renderer/restore', undefined, 'Previous wall restored'));

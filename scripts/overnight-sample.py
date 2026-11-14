@@ -39,8 +39,7 @@ def service(name: str) -> dict[str, str]:
     }
 
 
-def renderer_status() -> dict[str, object]:
-    cli = "/opt/mosaivue/current/.venv/bin/mosaivue"
+def renderer_status(cli: str = "/usr/local/bin/mosaivue") -> dict[str, object]:
     args = [cli, "status", "--json"]
     if os.geteuid() == 0 and shutil.which("runuser"):
         args = ["runuser", "-u", "mosaivue", "--", *args]
@@ -48,11 +47,15 @@ def renderer_status() -> dict[str, object]:
     if result is None or result.returncode != 0:
         return {"error": "status command unavailable"}
     try:
-        raw = json.loads(result.stdout)["renderer"]
+        response = json.loads(result.stdout)
+        raw = response["renderer"]
+        if not isinstance(raw, dict) or not isinstance(raw.get("streams", {}), dict):
+            raise ValueError("invalid renderer state")
     except (ValueError, KeyError, TypeError):
         return {"error": "invalid status response"}
     streams = {
         slot_id: {
+            "camera_id": stream.get("camera_id"),
             "state": stream.get("state"),
             "frames": stream.get("decoded_frames"),
             "cuts": stream.get("switch_count"),
@@ -62,10 +65,14 @@ def renderer_status() -> dict[str, object]:
             if isinstance((last := stream.get("last_frame_monotonic")), (int, float))
             else None,
         }
-        for slot_id, stream in raw.get("streams", {}).items()
+        for slot_id, stream in raw.get("streams", {}).items() if isinstance(stream, dict)
     }
     return {
         "state": raw.get("state"),
+        "version": response.get("version"),
+        "active_layout_id": raw.get("active_layout_id"),
+        "active_revision": raw.get("active_revision"),
+        "active_revision_id": raw.get("active_revision_id"),
         "backend": raw.get("backend"),
         "sink": raw.get("sink"),
         "rotation_normalize_caps": raw.get("rotation_normalize_caps"),
@@ -79,10 +86,12 @@ def renderer_status() -> dict[str, object]:
     }
 
 
-def web_healthy() -> bool:
+def web_healthy(url: str = "http://127.0.0.1:8080/healthz") -> bool:
     try:
-        with urllib.request.urlopen("http://127.0.0.1:8080/healthz", timeout=3) as response:
-            return response.status == 200 and json.load(response).get("status") == "ok"
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(url, timeout=3) as response:
+            payload = json.loads(response.read(4097))
+            return response.status == 200 and isinstance(payload, dict) and payload.get("status") == "ok"
     except (OSError, ValueError):
         return False
 
@@ -96,12 +105,18 @@ def gpu_status() -> dict[str, str] | None:
     )
     if result is None or result.returncode != 0:
         return {"state": "unavailable"}
-    values = [value.strip() for value in result.stdout.splitlines()[0].split(",")]
+    lines = result.stdout.splitlines()
+    if not lines:
+        return {"state": "unavailable"}
+    values = [value.strip() for value in lines[0].split(",")]
     names = ("gpu_percent", "decoder_percent", "memory_mib")
     return {name: values[index] for index, name in enumerate(names) if index < len(values)}
 
 
-def sample() -> dict[str, object]:
+def sample(
+    *, cli: str = "/usr/local/bin/mosaivue", health_url: str = "http://127.0.0.1:8080/healthz",
+    run_id: str | None = None, source_id: str | None = None,
+) -> dict[str, object]:
     connectors = {}
     for path in sorted(Path("/sys/class/drm").glob("card*-*")):
         status = path / "status"
@@ -109,12 +124,15 @@ def sample() -> dict[str, object]:
             connectors[path.name] = status.read_text(encoding="utf-8").strip()
     return {
         "time_utc": datetime.now(timezone.utc).isoformat(),  # noqa: UP017 (Python 3.9 on Pi 3)
+        "schema_version": 2,
         "host": socket.gethostname(),
+        "run_id": run_id,
+        "source_id": source_id,
         "renderer_service": service("mosaivue-renderer.service"),
         "web_service": service("mosaivue-server.service"),
         "xorg_service": service("mosaivue-xorg.service"),
-        "web_healthy": web_healthy(),
-        "renderer": renderer_status(),
+        "web_healthy": web_healthy(health_url),
+        "renderer": renderer_status(cli),
         "gpu": gpu_status(),
         "connectors": connectors,
     }
@@ -123,10 +141,14 @@ def sample() -> dict[str, object]:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, default=Path("/var/log/mosaivue/overnight-health.jsonl"))
+    parser.add_argument("--cli", default="/usr/local/bin/mosaivue", help="Installed CLI symlink or explicit path")
+    parser.add_argument("--health-url", default="http://127.0.0.1:8080/healthz", help="Local health URL; use http://[::1]:PORT/healthz for IPv6")
+    parser.add_argument("--run-id", help="New label after each deployment/reboot being qualified")
+    parser.add_argument("--source-id", help="Exact deployed source archive SHA256 or commit; operator supplied")
     args = parser.parse_args()
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with args.output.open("a", encoding="utf-8") as stream:
-        stream.write(json.dumps(sample(), separators=(",", ":")) + "\n")
+        stream.write(json.dumps(sample(cli=args.cli, health_url=args.health_url, run_id=args.run_id, source_id=args.source_id), separators=(",", ":")) + "\n")
     os.chmod(args.output, 0o640)
 
 

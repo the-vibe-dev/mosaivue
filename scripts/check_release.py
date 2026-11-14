@@ -35,6 +35,8 @@ REQUIRED = [
     "systemd/mosaivue-renderer.service",
     "systemd/mosaivue-rockchip-devices.conf",
     "scripts/rockpi-smoke.py",
+    "scripts/overnight-sample.py",
+    "scripts/analyze-soak.py",
     "src/mosaivue/api/app.py",
     "src/mosaivue/api/routes_onvif.py",
     "src/mosaivue/services/onvif.py",

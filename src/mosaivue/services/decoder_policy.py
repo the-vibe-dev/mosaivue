@@ -2,10 +2,17 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
+import re
 import shutil
+import stat
 import subprocess
+import tempfile
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -24,6 +31,7 @@ SOFTWARE_DECODERS = {
     "jpeg": ("jpegdec", "avdec_mjpeg"),
 }
 HARDWARE_PREFIXES = ("mpp", "nv", "v4l2", "omx", "va", "vulkan", "qsv", "msdk", "d3d")
+_ELEMENT_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_-]{0,127}")
 
 
 def codec_from_caps(caps: Any) -> str | None:
@@ -94,14 +102,24 @@ def working_software_decoder(codec: str, entry: dict[str, Any]) -> str | None:
     return preferred_software_decoder(codec, passed)
 
 
+def software_decoder_passed(codec: str, entry: dict[str, Any], decoder: str | None) -> bool:
+    """Check the exact choice, even when another software decoder ranks first."""
+    return decoder in SOFTWARE_DECODERS.get(codec, ()) and any(
+        candidate.get("name") == decoder
+        and candidate.get("kind") == "software"
+        and candidate.get("probe") == "passed"
+        for candidate in entry.get("candidates", [])
+    )
+
+
 def retain_verified_fallbacks(report: dict[str, Any], previous: dict[str, Any]) -> None:
     """Keep runtime-proven software choices across installer re-probes."""
     for codec, entry in report.get("codecs", {}).items():
         old = previous.get("codecs", {}).get(codec, {})
         if old.get("fixed_source") != "runtime_verified_software":
             continue
-        software = working_software_decoder(codec, entry)
-        if software == old.get("fixed"):
+        software = old.get("fixed")
+        if software_decoder_passed(codec, entry, software):
             entry["fixed"] = software
             entry["fixed_source"] = "runtime_verified_software"
             for key in ("runtime_verified_sink", "runtime_verified_slots", "runtime_verified_at"):
@@ -109,12 +127,62 @@ def retain_verified_fallbacks(report: dict[str, Any], previous: dict[str, Any]) 
                     entry[key] = old[key]
 
 
-def _save_decoder_policy(report: dict[str, Any], path: Path) -> None:
+def _policy_ownership(path: Path) -> tuple[int, int]:
+    try:
+        previous = path.stat(follow_symlinks=False)
+    except FileNotFoundError:
+        previous = path.parent.stat()
+    owner = previous.st_uid if os.geteuid() in {0, previous.st_uid} else -1
+    return owner, previous.st_gid
+
+
+@contextmanager
+def _policy_lock(path: Path, *, timeout: float = 2.0) -> Iterator[None]:
+    """Serialize short policy updates across the renderer and reprobe processes."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(".tmp")
-    temporary.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-    os.chmod(temporary, 0o640)
-    temporary.replace(path)
+    lock_path = path.with_name(f".{path.name}.lock")
+    descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW, 0o660)
+    try:
+        details = os.fstat(descriptor)
+        if not stat.S_ISREG(details.st_mode) or details.st_nlink != 1:
+            raise OSError("Decoder policy lock must be a regular file without hard links")
+        if os.geteuid() in {0, details.st_uid}:
+            os.fchown(descriptor, *_policy_ownership(path))
+            os.fchmod(descriptor, 0o660)
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("Decoder policy is busy; retry the update") from None
+                time.sleep(0.01)
+        yield
+    finally:
+        # Keep the lock inode stable: unlinking it would let another writer
+        # acquire a different inode while a current waiter holds this one.
+        os.close(descriptor)
+
+
+def _save_decoder_policy(report: dict[str, Any], path: Path) -> None:
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=path.parent, prefix=f".{path.name}.",
+            suffix=".tmp", delete=False,
+        ) as handle:
+            temporary = Path(handle.name)
+            json.dump(report, handle, indent=2)
+            handle.write("\n")
+            handle.flush()
+            os.fchown(handle.fileno(), *_policy_ownership(path))
+            os.fchmod(handle.fileno(), 0o640)
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def detect_decoder_policy() -> dict[str, Any]:
@@ -159,8 +227,11 @@ def detect_decoder_policy() -> dict[str, Any]:
 
 def write_decoder_policy(path: Path = DECODER_POLICY_PATH) -> dict[str, Any]:
     report = detect_decoder_policy()
-    retain_verified_fallbacks(report, load_decoder_policy(path))
-    _save_decoder_policy(report, path)
+    # Probes can take minutes. Only lock the final merge/write so runtime
+    # verification completed during a probe is retained in the new report.
+    with _policy_lock(path):
+        retain_verified_fallbacks(report, load_decoder_policy(path))
+        _save_decoder_policy(report, path)
     return report
 
 
@@ -168,21 +239,53 @@ def persist_fixed_decoder_fallback(
     codec: str, decoder: str, path: Path = DECODER_POLICY_PATH
 ) -> bool:
     """Persist a decoder only after a real fixed camera produces frames with it."""
-    report = load_decoder_policy(path)
-    entry = report.get("codecs", {}).get(codec)
-    if not isinstance(entry, dict) or working_software_decoder(codec, entry) != decoder:
-        return False
-    entry["fixed"] = decoder
-    entry["fixed_source"] = "runtime_verified_software"
-    _save_decoder_policy(report, path)
-    return True
+    with _policy_lock(path):
+        report = load_decoder_policy(path)
+        entry = report.get("codecs", {}).get(codec)
+        if not isinstance(entry, dict) or not software_decoder_passed(codec, entry, decoder):
+            return False
+        if entry.get("fixed") == decoder and entry.get("fixed_source") == "runtime_verified_software":
+            return True
+        # Evidence about a previous decoder must not be attributed to this
+        # new one. Automatic persistence proves one source produced frames.
+        for key in ("runtime_verified_sink", "runtime_verified_slots", "runtime_verified_at"):
+            entry.pop(key, None)
+        entry["fixed"] = decoder
+        entry["fixed_source"] = "runtime_verified_software"
+        entry["runtime_verified_slots"] = 1
+        entry["runtime_verified_at"] = datetime.now(UTC).isoformat()
+        _save_decoder_policy(report, path)
+        return True
 
 
 def load_decoder_policy(path: Path = DECODER_POLICY_PATH) -> dict[str, Any]:
     try:
         report = json.loads(path.read_text(encoding="utf-8"))
         if report.get("schema_version") == 1 and isinstance(report.get("codecs"), dict):
+            valid_codecs = {}
+            for codec, entry in report["codecs"].items():
+                if codec not in CODEC_CAPS or not isinstance(entry, dict):
+                    continue
+                candidates = entry.get("candidates", [])
+                if not isinstance(candidates, list):
+                    continue
+                entry["candidates"] = [
+                    item for item in candidates
+                    if isinstance(item, dict)
+                    and isinstance(item.get("name"), str)
+                    and _ELEMENT_NAME.fullmatch(item["name"])
+                    and isinstance(item.get("kind"), str)
+                    and item.get("kind") in {"hardware", "software", "unknown"}
+                    and isinstance(item.get("probe"), str)
+                    and item.get("probe") in {"passed", "failed", "unprobed"}
+                ]
+                for purpose in ("fixed", "rotation"):
+                    selected = entry.get(purpose)
+                    if not isinstance(selected, str) or not _ELEMENT_NAME.fullmatch(selected):
+                        entry[purpose] = None
+                valid_codecs[codec] = entry
+            report["codecs"] = valid_codecs
             return report
-    except (OSError, ValueError, AttributeError):
+    except (OSError, UnicodeError, ValueError, AttributeError):
         pass
     return {"schema_version": 1, "codecs": {}}

@@ -269,7 +269,12 @@ class LayoutCreate(BaseModel):
     data: LayoutData = Field(default_factory=LayoutData)
 
 
-class LayoutUpdate(BaseModel):
+class LayoutRevisionGuard(BaseModel):
+    expected_revision: int | None = Field(default=None, ge=1, le=2**63 - 1, strict=True)
+    expected_revision_id: str | None = Field(default=None, min_length=1, max_length=128)
+
+
+class LayoutUpdate(LayoutRevisionGuard):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = Field(default=None, max_length=2000)
     display_profile_id: str | None = None

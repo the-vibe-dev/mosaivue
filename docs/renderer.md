@@ -190,3 +190,9 @@ after changing the CA file or this setting.
 ## Native backend decision
 
 A custom FFmpeg/DRM/DMA-BUF renderer is not included because this environment cannot prove that the GStreamer implementation fails the functional or performance requirements. The abstraction preserves that option. A native component should be added only with benchmark evidence and must use current APIs.
+
+## b5 decoder-policy persistence
+
+Verified fixed-source software choices are merged under a short, stable advisory lock and written through unique atomic temporary files. Reprobes run outside the lock and retain the exact verified decoder only if it still passes. Failed persistence retries after a delay on a later real frame; stale callbacks from replaced sources are ignored. A first-frame fallback requires an observed codec and a software decoder that passed the local probe. The installer retains the previous policy if the probe command fails.
+
+The supplied KMS fullscreen/aspect-preservation behavior is unchanged. These are software-tested changes awaiting candidate appliance acceptance. Earlier b4 physical observations do not automatically qualify b5. Use `scripts/overnight-sample.py` with `scripts/analyze-soak.py` to inspect a labeled run; detailed b4 observations are retained locally outside Git.

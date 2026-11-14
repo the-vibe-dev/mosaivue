@@ -8,7 +8,7 @@ Mosaivue is a local-first camera-monitor appliance for Raspberry Pi and Linux. I
 
 Mosaivue is designed for Raspberry Pi OS Lite and does not require a desktop session. The control plane, camera credentials, layouts, health data, and previews stay on the appliance. There is no required cloud account, analytics service, or telemetry.
 
-> **Review candidate: 0.1.0b4.** This archive contains the November 13, 2026 follow-up reliability, installer and operator-interface improvements. Read [the current review](docs/review/current-report.md), [validation results](docs/review/current-validation.md), and [upgrade instructions](docs/review/current-upgrade.md). Your supplied b3 browser and appliance observations are preserved in [their original record](docs/review/supplied-b3-build-verification.md); they do not qualify the changed b4 runtime.
+> **Candidate source: 0.1.0b5.** This update adds guarded layout editing and activation, display-profile assignment/editing, reliable decoder-preference persistence, and observation analysis. See the [changelog](CHANGELOG.md), [build verification](BUILD-VERIFICATION.md), and [installation guide](docs/install.md). The earlier b4 appliance observations do not qualify the changed b5 runtime.
 
 > **Published baseline (0.1.0b2):** v0.1.0b2 is the first public beta. In a 23-hour sample window, the tested Pi 3B+, ROCK Pi 4B+, and Ubuntu GPU walls each kept seven of seven tiles LIVE with one renderer process and advancing rotation. The ROCK Pi's installer-managed 640×360 normalization kept its two 16:9 rotating feeds on matching caps through more than 5,500 cuts; one fixed tile recovered from a cold-start retry. These are site results, not stream-count guarantees. Other camera aspect ratios and Raspberry Pi 4/5 physical output remain unqualified. See [beta notes](docs/beta-release.md).
 
@@ -23,7 +23,8 @@ Mosaivue is designed for Raspberry Pi OS Lite and does not require a desktop ses
 - Automatic source-profile selection so small tiles can use camera substreams
 - GStreamer compositor with isolated per-stream branches and an OMXPlayer option for legacy Pi hardware
 - Per-stream health, reconnect backoff, placeholder fallback, and independent stream restart
-- Layout revision history, synchronous activation rollback, and saved/applied revision status with explicit reapplication
+- Layout revision history, guarded concurrent editing with reload/save-copy recovery, synchronous activation rollback, and saved/applied revision identity with explicit reapplication
+- Shared display-profile creation/editing and assignment, custom layout dimensions, and profile-aware schematic previews
 - Focus/fullscreen camera mode with restore
 - Browser-managed overnight/day schedules, phone-friendly display remote, and session-scoped Server-Sent Events
 - FastAPI REST API and OpenAPI documentation
@@ -38,6 +39,8 @@ Mosaivue is designed for Raspberry Pi OS Lite and does not require a desktop ses
 Browse the [documentation index](docs/index.md) for installation, camera setup, layouts, rendering, security, and beta qualification.
 
 ## Screenshots
+
+These retained screenshots illustrate earlier interface builds. They were not regenerated as b5 browser evidence.
 
 ### Appliance dashboard
 
@@ -86,8 +89,8 @@ It downloads a versioned source release, verifies its SHA-256 checksum, and runs
 To install a source archive directly:
 
 ```bash
-tar -xzf mosaivue-0.1.0b4-source.tar.gz
-cd mosaivue-0.1.0b4
+tar -xzf mosaivue-0.1.0b5-source.tar.gz
+cd mosaivue-0.1.0b5
 sudo bash installer/install-local.sh
 ```
 

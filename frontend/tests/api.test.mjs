@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 const saved = new Map();
 globalThis.sessionStorage = { getItem: (key) => saved.get(key), setItem: (key, value) => saved.set(key, value), removeItem: (key) => saved.delete(key) };
-const { api, ApiError, apiErrorMessage, download, setCsrf } = await import('../dist/assets/api.js');
+const { api, ApiError, apiErrorMessage, download, setCsrf, layoutRevisionConflict } = await import('../dist/assets/api.js');
 
 test('validation errors identify fields instead of showing object strings', () => {
   assert.equal(apiErrorMessage({ detail: [{ loc: ['body', 'stream_profiles', 0, 'url'], msg: 'RTSP URL required' }] }, 'Invalid request'), 'stream_profiles → 0 → url: RTSP URL required');
@@ -11,6 +11,15 @@ test('validation errors identify fields instead of showing object strings', () =
 
 test('layout validation details retain the service errors rather than a generic HTTP status', () => {
   assert.equal(apiErrorMessage({ detail: { errors: ['Slot uses a missing camera', 'Duplicate slot ID'], warnings: [] } }, 'Unprocessable Entity'), 'Slot uses a missing camera; Duplicate slot ID');
+});
+
+test('revision conflicts retain structured identities and a readable message', () => {
+  const detail = { code: 'layout_revision_conflict', message: 'Another client saved this layout', expected_revision: 2, current_revision: 3, expected_revision_id: 'old', current_revision_id: 'new' };
+  assert.equal(apiErrorMessage({ detail }, 'Conflict'), detail.message);
+  assert.deepEqual(layoutRevisionConflict(new ApiError(409, detail.message, { detail })), detail);
+  assert.equal(layoutRevisionConflict(new ApiError(409, 'Duplicate name', { detail: 'Duplicate name' })), null);
+  const deletedDuringApply = { code: 'layout_changed_during_apply', message: 'The requested revision reached the renderer, but its history was deleted', renderer_applied: true };
+  assert.deepEqual(layoutRevisionConflict(new ApiError(409, deletedDuringApply.message, { detail: deletedDuringApply })), deletedDuringApply);
 });
 
 test('plain-text errors produce ApiError without reading the response body twice', async () => {

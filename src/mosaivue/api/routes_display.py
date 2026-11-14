@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request, Response
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 
-from ..models import DisplayProfile
+from ..models import DisplayProfile, Layout
 from ..schemas import DisplayProfileIn, DisplayProfileOut
 from ..services.capabilities import detect_drm_outputs
 from .dependencies import CSRF, DB, Auth
@@ -61,10 +61,24 @@ async def update_profile(
 
 
 @router.delete("/profiles/{profile_id}", status_code=204)
-def delete_profile(profile_id: str, db: DB, _: CSRF) -> Response:
-    profile = db.get(DisplayProfile, profile_id)
-    if profile is None:
-        raise HTTPException(status_code=404, detail="Display profile not found")
-    db.delete(profile)
+async def delete_profile(profile_id: str, request: Request, db: DB, _: CSRF) -> Response:
+    # Check the relationship in the DELETE itself so a racing association cannot
+    # slip between a preflight SELECT and an FK SET NULL deletion.
+    associated = select(Layout.id).where(Layout.display_profile_id == profile_id).exists()
+    result = db.execute(delete(DisplayProfile).where(
+        DisplayProfile.id == profile_id, ~associated,
+    ).execution_options(synchronize_session=False))
+    if result.rowcount != 1:
+        if db.get(DisplayProfile, profile_id) is None:
+            raise HTTPException(status_code=404, detail="Display profile not found")
+        names = list(db.scalars(select(Layout.name).where(
+            Layout.display_profile_id == profile_id,
+        ).order_by(Layout.name)))
+        raise HTTPException(
+            status_code=409,
+            detail="Display profile is still used by layouts: " + ", ".join(names)
+            + ". Detach it from those layouts before deleting.",
+        )
     db.commit()
+    await request.app.state.events.publish("display.deleted", {"id": profile_id})
     return Response(status_code=204)

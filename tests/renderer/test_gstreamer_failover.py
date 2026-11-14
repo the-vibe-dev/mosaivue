@@ -165,6 +165,7 @@ def test_first_frame_timeout_retries_only_stuck_camera() -> None:
     renderer._slots = {
         "stuck": SimpleNamespace(
             connect_started_monotonic=now - 21, restarting=False,
+            source_codec="h264",
             source_refresh_source_id=None, reconnect_source_id=None, prepared=None,
             selector=SimpleNamespace(set_property=lambda *_: None),
             selector_placeholder_pad=object(),
@@ -207,7 +208,7 @@ def test_first_software_frame_schedules_persistent_decoder_choice(monkeypatch) -
     renderer = object.__new__(GStreamerRenderer)
     queue = object()
     renderer._slots = {"fixed": SimpleNamespace(
-        source_queue=queue,
+        source_queue=queue, source_codec="h264",
         spec=SimpleNamespace(source_width=640, source_height=360),
     )}
     renderer._health = {"fixed": StreamHealth(
@@ -215,6 +216,8 @@ def test_first_software_frame_schedules_persistent_decoder_choice(monkeypatch) -
     )}
     renderer._software_fallback_slots = {"fixed"}
     renderer._persisted_software_fallback_slots = set()
+    renderer._software_fallback_pending = {}
+    renderer._software_fallback_retry_at = {}
     scheduled = []
     renderer.GLib = SimpleNamespace(
         idle_add=lambda callback, *args: scheduled.append((callback, args))
@@ -232,10 +235,11 @@ def test_first_software_frame_schedules_persistent_decoder_choice(monkeypatch) -
 
     assert renderer._on_frame(None, None, "fixed", queue) == "ok"
     assert renderer._health["fixed"].state == HealthState.live
-    assert renderer._persisted_software_fallback_slots == {"fixed"}
+    assert renderer._persisted_software_fallback_slots == set()
     assert scheduled[0][0] == renderer._persist_software_fallback
-    assert scheduled[0][1] == ("fixed", "avdec_h264")
+    assert scheduled[0][1] == ("fixed", (renderer._slots["fixed"], queue, "h264", "avdec_h264"))
     assert scheduled[0][0](*scheduled[0][1]) is False
+    assert renderer._persisted_software_fallback_slots == {"fixed"}
     assert persisted == [("h264", "avdec_h264")]
     assert renderer._decoder_policy["codecs"]["h264"]["fixed"] == "avdec_h264"
 

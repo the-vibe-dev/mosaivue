@@ -228,3 +228,110 @@ def test_unsupported_display_controls_are_disabled_and_explained(control_page):
     assert page.locator("#editor-camera-library").is_visible()
     page.get_by_role("button", name="Close camera library", exact=True).click()
     assert not page.locator("#editor-camera-library").is_visible()
+
+
+def test_display_profile_edit_assignment_and_custom_dimensions(control_page):
+    """Uses real configuration APIs but never applies a layout to physical output."""
+    page, base = control_page
+    suffix = uuid.uuid4().hex[:8]
+    profile_name, layout_name = f"QA dimensions {suffix}", f"QA profile wall {suffix}"
+    headers = {"X-CSRF-Token": page.request.get(f"{base}/api/v1/auth/me").json()["csrf_token"]}
+    profile_id = layout_id = None
+    try:
+        page.locator('[data-nav="/display"]').click()
+        page.get_by_role("button", name="New profile", exact=True).click()
+        page.locator('dialog [name="name"]').fill(profile_name)
+        page.locator('dialog [name="width"]').fill("800")
+        page.locator('dialog [name="height"]').fill("600")
+        page.get_by_role("button", name="Create profile", exact=True).click()
+        page.wait_for_selector("dialog[open]", state="detached")
+        profile_id = next(item["id"] for item in page.request.get(f"{base}/api/v1/display/profiles").json() if item["name"] == profile_name)
+        page.locator('[data-nav="/layouts"]').click()
+        page.get_by_role("button", name="New layout", exact=True).click()
+        page.locator('dialog [name="name"]').fill(layout_name)
+        page.locator('dialog [name="layout_display_profile"]').select_option(profile_id)
+        assert page.locator('dialog [name="layout_output_width"]').is_disabled()
+        with page.expect_response(lambda response: response.url.endswith("/api/v1/layouts") and response.request.method == "POST") as created:
+            page.get_by_role("button", name="Create and edit", exact=True).click()
+        assert created.value.status == 201
+        layout_id = created.value.json()["id"]
+        page.wait_for_selector('.display-frame[data-render-width="800"][data-render-height="600"]')
+        page.get_by_role("link", name="Back to layouts", exact=True).click()
+        page.locator('[data-nav="/display"]').click()
+        row = page.locator(f'[data-display-profile="{profile_id}"]')
+        assert row.get_by_role("button", name=f"Delete {profile_name}", exact=True).is_disabled()
+        row.get_by_role("button", name=f"Edit {profile_name}", exact=True).click()
+        page.locator('dialog [name="width"]').fill("1024")
+        page.locator('dialog [name="height"]').fill("768")
+        page.get_by_role("button", name="Save profile", exact=True).click()
+        page.wait_for_selector("dialog[open]", state="detached")
+        row.get_by_role("link", name=layout_name, exact=True).click()
+        page.wait_for_selector('.display-frame[data-render-width="1024"][data-render-height="768"]')
+        # Simulate another operator changing this shared profile while the editor stays open.
+        changed = page.request.put(f"{base}/api/v1/display/profiles/{profile_id}", headers={**headers, "Content-Type": "application/json"}, data=json.dumps({"name": profile_name, "width": 1280, "height": 720}))
+        assert changed.status == 200
+        page.get_by_role("button", name="Refresh status", exact=True).click()
+        page.wait_for_selector('.display-frame[data-render-width="1280"][data-render-height="720"]')
+        page.get_by_role("button", name="Layout settings", exact=True).click()
+        page.locator('dialog [name="layout_display_profile"]').select_option("")
+        page.locator('dialog [name="layout_output_width"]').fill("1440")
+        page.locator('dialog [name="layout_output_height"]').fill("900")
+        page.get_by_role("button", name="Update draft settings", exact=True).click()
+        page.wait_for_selector('.display-frame[data-render-width="1440"][data-render-height="900"]')
+        assert "Unsaved changes" in page.locator(".editor-title-block").inner_text()
+        with page.expect_response(lambda response: response.url.endswith(f"/api/v1/layouts/{layout_id}") and response.request.method == "PUT") as saved:
+            page.get_by_role("button", name="Save draft", exact=True).click()
+        assert saved.value.status == 200
+        result = saved.value.json()
+        assert result["display_profile_id"] is None
+        assert result["revision"]["data"]["output_width"] == 1440
+        assert result["revision"]["data"]["output_height"] == 900
+        assert saved.value.request.post_data_json["expected_revision_id"]
+    finally:
+        if layout_id:
+            assert page.request.delete(f"{base}/api/v1/layouts/{layout_id}", headers=headers).status == 204
+        if profile_id:
+            assert page.request.delete(f"{base}/api/v1/display/profiles/{profile_id}", headers=headers).status == 204
+
+
+def test_concurrent_editor_save_preserves_local_work_and_can_create_copy(control_page):
+    """Two authenticated pages edit one disposable draft; no renderer apply occurs."""
+    page, base = control_page
+    headers = {"X-CSRF-Token": page.request.get(f"{base}/api/v1/auth/me").json()["csrf_token"]}
+    name = f"QA conflict {uuid.uuid4().hex[:8]}"
+    created = page.request.post(f"{base}/api/v1/layouts", headers={**headers, "Content-Type": "application/json"}, data=json.dumps({"name": name, "data": {"slots": [], "output_width": 1920, "output_height": 1080}}))
+    assert created.status == 201
+    layout_id = created.json()["id"]
+    copy_id = None
+    second = page.context.new_page()
+    try:
+        page.goto(f"{base}/layouts/{layout_id}/edit", wait_until="domcontentloaded")
+        second.goto(f"{base}/layouts/{layout_id}/edit", wait_until="domcontentloaded")
+        for tab, width in ((page, "1440"), (second, "1600")):
+            tab.get_by_role("button", name="Layout settings", exact=True).click()
+            tab.locator('dialog [name="layout_output_width"]').fill(width)
+            tab.get_by_role("button", name="Update draft settings", exact=True).click()
+        with second.expect_response(lambda response: response.url.endswith(f"/api/v1/layouts/{layout_id}") and response.request.method == "PUT") as saved:
+            second.get_by_role("button", name="Save draft", exact=True).click()
+        assert saved.value.status == 200
+        with page.expect_response(lambda response: response.url.endswith(f"/api/v1/layouts/{layout_id}") and response.request.method == "PUT") as rejected:
+            page.get_by_role("button", name="Save draft", exact=True).click()
+        assert rejected.value.status == 409
+        page.locator("[data-save-error]").wait_for()
+        assert "unsaved edits are still open" in page.locator("[data-save-error]").inner_text()
+        assert page.locator(".display-frame").get_attribute("data-render-width") == "1440"
+        assert page.get_by_role("button", name="Save draft", exact=True).is_disabled()
+        page.get_by_role("button", name="Save my edits as a copy", exact=True).click()
+        with page.expect_response(lambda response: response.url.endswith("/api/v1/layouts") and response.request.method == "POST") as copied:
+            page.get_by_role("button", name="Create copy", exact=True).click()
+        assert copied.value.status == 201
+        copy_id = copied.value.json()["id"]
+        page.wait_for_url(f"{base}/layouts/{copy_id}/edit")
+        original = page.request.get(f"{base}/api/v1/layouts/{layout_id}").json()
+        assert original["revision"]["data"]["output_width"] == 1600
+        assert copied.value.json()["revision"]["data"]["output_width"] == 1440
+    finally:
+        second.close()
+        if copy_id:
+            assert page.request.delete(f"{base}/api/v1/layouts/{copy_id}", headers=headers).status == 204
+        assert page.request.delete(f"{base}/api/v1/layouts/{layout_id}", headers=headers).status == 204

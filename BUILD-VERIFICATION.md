@@ -1,28 +1,29 @@
-# Build verification: 0.1.0b4 review candidate
+# Build verification - 0.1.0b5 review candidate
 
-Reviewed November 13, 2026 from the newly uploaded b3 archive. This candidate is unpublished and has not been deployed by this review. No database migration was added.
+The supplied b5 candidate was reviewed on November 13, 2026 (America/New_York); execution logs use UTC. Detailed review reports and prior appliance evidence are retained locally in the ignored `.private-reviews/` directory.
 
-- Python: **358 passed, 3 explicit environment/privilege skips**, one existing upstream warning. Browser tests excluded.
-- Combined statement/branch coverage: **62.44%**, versus **59.50%** on this uploaded b3 baseline.
-- Frontend: strict TypeScript/build passed, **35 JavaScript tests passed**, 36 compiled static files synchronized.
-- Ruff, byte compilation, 13 shell syntax checks and both nonprivileged installer helper suites passed. Installer focused suite:21 passed/1 root-rsync skip, included in the Python total.
-- Runtime Python advisory lookup:37 distributions, no known advisories returned. Bandit:46 low patterns,0 high/medium; triage retained, including an implemented installed-helper ownership correction.
-- Source, wheel and amd64 Debian builds with checksums and package smoke evidence are included in the handoff. A build is not a privileged installation pass.
-- Browser rendering, real AF_UNIX integration, privileged ownership/install/rollback, ARM binaries and changed b4 camera/physical output remain unqualified here.
+## Current software result
 
-Read [current validation](docs/review/current-validation.md), [the report](docs/review/current-report.md), and [upgrade guidance](docs/review/current-upgrade.md). The exact supplied b3 verification file is preserved at [supplied b3 evidence](docs/review/supplied-b3-build-verification.md), including external browser success and Pi rollback/upgrade/reboot observations, incomplete Ubuntu HDMI, unreachable ROCK Pi and no completed supplied soak. Those results are not reclassified as b4 passes.
+- Exact-upload baseline: 362 Python passes, 3 environment-dependent skips.
+- Supplied candidate: 442 Python passes, 3 environment-dependent skips, 1 existing Starlette/HTTPX deprecation warning.
+- Combined statement/branch coverage: 63.11% to 65.10%.
+- Frontend: 53 JavaScript passes, strict TypeScript/production build passed, 38 static files synchronized and byte-verified.
+- Supplied review environment: 1 static frontend/E2E pass and 10 browser skips; the static pass is included in its combined count.
+- Ruff, byte compilation, 13 shell syntax checks and both nonprivileged installer helper suites passed.
+- Installed runtime graph: 37 Python distributions audited with no known advisories returned. Bandit retained 0 high, 1 reviewed medium and 46 low patterns.
+- Source, wheel and amd64 Debian artifacts are included with checksums and package inspection/smoke evidence. Exact-input patch application and ZIP manifest verification are recorded in the delivered validation directory.
 
-## Local integration after handoff
+## Local integration checks after applying the archive
 
-The 328-file bundle manifest passed and its patch applied to the committed b3 tree. The patched tree matched the delivered b4 source byte for byte before local test and documentation corrections.
+- The integrated non-browser Python suite passed **443 tests with 2 privilege skips**. This host permits the Unix-socket test skipped by the supplied review. The existing Starlette/HTTPX deprecation warning remained.
+- TypeScript typecheck, production frontend build and all **53 JavaScript tests** passed. A disposable seeded server and Chromium passed all **10 browser workflows**. A separate desktop and 390-pixel mobile editor check loaded the page, selected a tile, found no page exceptions or unexpected HTTP errors, and found no horizontal document overflow. The expected unauthenticated `/auth/me` 401 occurred before login.
+- Ruff, Python byte compilation, release check, installer rotation/path/bootstrap helpers and shell syntax checks passed.
+- Fresh source and amd64 Debian packages were built from the integrated tree; both SHA-256 sidecars verified. The source package excluded the local review archive and previous review history. Public Markdown links were checked after moving `docs/review/` into the Git-ignored `.private-reviews/` directory; none were missing.
 
-- Python: **359 passed, 2 environment/privilege skips**, one upstream Starlette/httpx warning. This host permits the Unix-socket case skipped in the review environment.
-- Frontend: **35 JavaScript tests**, strict TypeScript, build, static-asset synchronization, Ruff, compilation, installer helper checks and release check passed.
-- Browser: **8 workflows passed** against a disposable seeded local server. The test fixture now reuses an authenticated context so setup plus browser tests do not exceed the production login rate limit. Desktop dashboard and mobile layout controls rendered and responded. One expected pre-login `/auth/me` 401 appeared in the console; no page exception was observed.
-- A mobile stacking defect discovered during visual inspection was corrected: the selected canvas tile no longer covers the inspector drawer. The browser suite includes a hit-test regression for the overlap.
-- Source tarball and amd64 Debian package builds succeeded from the integrated tree; both generated SHA-256 manifests verified. No privileged install was attempted.
-- PTZ is **not implemented in b4** and no PTZ camera is available for physical protocol testing. Keep PTZ and presets out of supported-feature claims until implementation and vendor-camera acceptance are complete.
+## What these results do not establish
 
-After this local handoff, b4 was installed on the Pi 3, Ubuntu test VM and ROCK Pi under a controlled rollout. The Pi returned to 7/7 LIVE after a reboot; Ubuntu's physically connected HDMI wall reached 7/7 LIVE with advancing frames and the user confirmed visible rotation. The ROCK Pi returned after reboot with 7/7 LIVE, advancing frames and a full 1920×1080 KMS video plane that the user confirmed visually. Its first KMS trial failed and was rolled back before the corrected fullscreen build. **No 24-hour b4 window is complete yet**. All three final observation windows now use the same patched source archive; earlier logs remain separate. See [the dated b4 rollout record](docs/review/b4-live-rollout.md). These observations are separate from the supplied b3 results above.
+No b5 root/systemd install, ARM/native-media execution, real camera, physical HDMI, hotplug or long-run observation occurred here. The local browser run exercised a disposable test backend, not physical playback. Real different-group and root/rsync ownership cases remain skipped. Product screenshots in `docs/images/` are historical; the local editor QA screenshots are outside the repository.
 
-The post-review renderer/decoder follow-up passed **363 Python tests with two privilege skips**, Ruff, byte compilation and the release check. The ROCK Pi fullscreen build was created from commit `f2579dc`; its source tarball checksum was verified on the target before installation. Hardware observations remain in progress.
+The supplied b4 record includes eight browser workflows, Pi 3 post-reboot 7/7 LIVE, Ubuntu physical 7/7 advancing streams, and ROCK Pi fullscreen 7/7 with one cold-start restart. Those are meaningful results for that exact b4 source. No completed final-source 24h observation was included, and all controlled upgrades used `--skip-packages`. PTZ remains unimplemented and physical PTZ hardware was unavailable.
+
+See the [installation guide](docs/install.md), [hardware test plan](docs/hardware-test-plan.md), and [changelog](CHANGELOG.md). The supplied review did not publish or deploy this candidate.

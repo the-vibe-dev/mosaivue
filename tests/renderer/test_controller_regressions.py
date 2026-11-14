@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from mosaivue.models import Camera, Layout, LayoutRevision, RotationGroup, StreamProfile
@@ -321,7 +322,50 @@ async def test_status_caches_capabilities_and_preserves_wall_identity_during_foc
         assert focused["focused"] is True
         assert focused["active_layout_id"] == data["layout"]
         assert focused["active_revision"] == 1
+        assert focused["active_revision_id"] == status["active_revision_id"]
         assert focused["capabilities"]["feature_support"]["labels"] is True
         assert focused["capabilities"]["limitations"]
+    finally:
+        await controller.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_apply_revision_identity_guard_rejects_before_backend_mutation(db, cipher, monkeypatch):
+    data = seed_wall(db)
+    controller = await controller_for(db, cipher, data)
+    old_id = controller.active_revision_id
+    old_task = controller.rotation_tasks["slot-0"]
+    monkeypatch.setattr(controller, "_apply_transaction", lambda *_: pytest.fail("Mutated wall for stale revision"))
+    try:
+        with pytest.raises(ValueError, match="identity changed"):
+            await controller.apply_layout(data["layout"], 1, revision_id="superseded-revision")
+        assert controller.active_revision_id == old_id
+        assert controller.rotation_tasks["slot-0"] is old_task
+        assert controller.current_specs["slot-0"].camera_id == data["cameras"][0]
+    finally:
+        await controller.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_same_number_import_requires_reapply_before_rotation_or_focus_restore(db, cipher):
+    data = seed_wall(db)
+    controller = await controller_for(db, cipher, data)
+    old_id = controller.active_revision_id
+    row = db.scalar(select(LayoutRevision).where(LayoutRevision.layout_id == data["layout"]))
+    row.id = "replacement-revision-identity"
+    db.commit()
+    try:
+        with pytest.raises(ValueError, match="revision was replaced"):
+            await controller.rotate("slot-0", manual=True)
+        assert controller.current_specs["slot-0"].camera_id == data["cameras"][0]
+        await controller.focus_camera(data["cameras"][1])
+        assert controller.status()["active_revision_id"] == old_id
+        with pytest.raises(ValueError, match="identity changed"):
+            await controller.restore_layout()
+        assert controller.focused
+        assert controller.current_specs["__focus__"].camera_id == data["cameras"][1]
+        status = await controller.apply_layout(data["layout"], 1, revision_id="replacement-revision-identity")
+        assert status["active_revision_id"] == "replacement-revision-identity"
+        assert not controller.focused
     finally:
         await controller.shutdown()

@@ -356,8 +356,7 @@ for codec, choice in plan["codecs"].items():
     print(f"{codec}: fixed={choice['fixed'] or 'automatic'}, rotation={choice['rotation'] or 'automatic'}")
 PY
 then
-  rm -f /var/lib/mosaivue/decoder-policy.json
-  cw_warn "Decoder probe failed; GStreamer will select from its available decoders automatically"
+  cw_warn "Decoder probe failed; retaining any previous decoder policy. Without a valid saved policy, GStreamer selects from available decoders automatically"
 fi
 if ! (cd "$RELEASE_DIR.new" && runuser -u mosaivue -- ./.venv/bin/python -) <<'PY'
 from mosaivue.services.capabilities import write_capabilities

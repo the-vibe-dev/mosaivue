@@ -30,8 +30,8 @@ The command installs the download prerequisites first. The bootstrap then suppli
 ## Native appliance install
 
 ```bash
-tar -xzf mosaivue-0.1.0b4-source.tar.gz
-cd mosaivue-0.1.0b4
+tar -xzf mosaivue-0.1.0b5-source.tar.gz
+cd mosaivue-0.1.0b5
 sudo ./install.sh
 ```
 
@@ -59,7 +59,7 @@ The b4 local installer selects the checksum-pinned Bullseye `pydantic-core` whee
 
 After staging is renamed, editable installs repair entry-point, `.pth` and direct-URL metadata paths. Local HTTP health checks use the configured address family (IPv6 wildcard uses `::1`) and bypass HTTP proxy settings. These paths have focused software regressions; requalify privileged upgrade/rollback/reboot on the target appliance.
 
-Settings now validate known values. Use `mosaivue config validate` with the candidate environment before service restart, and correct field-specific errors. The [candidate upgrade guide](review/current-upgrade.md) explains backup boundaries and acceptance.
+Settings now validate known values. Use `mosaivue config validate` with the candidate environment before service restart, and correct field-specific errors. Preserve the installed configuration, database, master key, decoder policy and service overrides together before upgrading; confirm wall output and rollback after installation.
 
 ## Bind modes
 

@@ -18,6 +18,7 @@ from ..services.decoder_policy import (
     load_decoder_policy,
     persist_fixed_decoder_fallback,
     preferred_software_decoder,
+    software_decoder_passed,
     video_decoder_factory,
     working_software_decoder,
 )
@@ -118,6 +119,7 @@ class _SlotRuntime:
     compositor_pad: Any
     source: Any | None = None
     source_queue: Any | None = None
+    source_codec: str | None = None
     frame_probe_id: int | None = None
     reconnect_source_id: int | None = None
     prepared: _PreparedBranch | None = None
@@ -184,6 +186,8 @@ class GStreamerRenderer(RendererBackend):
         self._decoder_policy = load_decoder_policy()
         self._software_fallback_slots: set[str] = set()
         self._persisted_software_fallback_slots: set[str] = set()
+        self._software_fallback_pending: dict[str, tuple[_SlotRuntime, Any, str, str]] = {}
+        self._software_fallback_retry_at: dict[str, float] = {}
         self._rotation_normalize_size = _rotation_normalize_size(
             os.environ.get("MOSAIVUE_ROTATION_NORMALIZE")
         )
@@ -683,7 +687,7 @@ class GStreamerRenderer(RendererBackend):
             raise RuntimeError("Unable to create RTSP video source")
         rtsp.set_property("location", spec.url)
         self._configure_rtsp_source(rtsp, spec)
-        decoder.connect("autoplug-select", self._select_decoder_factory, spec.is_rotation, spec.slot_id)
+        decoder.connect("autoplug-select", self._select_decoder_factory, spec.is_rotation, spec.slot_id, source)
         decoder.connect("element-added", self._on_decoder_element_added, spec.slot_id, source)
         # UniFi and other cameras can advertise audio alongside video. Select
         # only video before SETUP for fixed and rotating tiles alike so unused
@@ -727,13 +731,17 @@ class GStreamerRenderer(RendererBackend):
 
     def _select_decoder_factory(
         self, _: Any, __: Any, caps: Any, factory: Any, is_rotation: bool,
-        slot_id: str,
+        slot_id: str, source: Any | None = None,
     ) -> int:
         # GstAutoplugSelectResult: TRY=0, SKIP=2. Parsers and depayloaders
         # remain eligible; only competing video decoders are filtered.
         codec = codec_from_caps(caps)
         if codec is None or not video_decoder_factory(factory):
             return 0
+        runtime = getattr(self, "_slots", {}).get(slot_id)
+        current_source = source is None or (runtime is not None and runtime.source is source)
+        if runtime is not None and current_source:
+            runtime.source_codec = codec
         selected = self._decoder_policy.get("codecs", {}).get(codec, {}).get(
             "rotation" if is_rotation else "fixed"
         )
@@ -743,7 +751,7 @@ class GStreamerRenderer(RendererBackend):
                 if self.Gst.ElementFactory.find(name)
             }
             selected = preferred_software_decoder(codec, available) or selected
-        if not is_rotation and slot_id in getattr(self, "_software_fallback_slots", set()):
+        if not is_rotation and current_source and slot_id in getattr(self, "_software_fallback_slots", set()):
             selected = working_software_decoder(
                 codec, self._decoder_policy.get("codecs", {}).get(codec, {})
             ) or selected
@@ -845,15 +853,7 @@ class GStreamerRenderer(RendererBackend):
             health.last_frame_monotonic = time.monotonic()
             health.decoded_frames += 1
             health.detail = None
-            if (
-                slot_id in getattr(self, "_software_fallback_slots", set())
-                and slot_id not in getattr(self, "_persisted_software_fallback_slots", set())
-                and health.decoder_selected
-            ):
-                self._persisted_software_fallback_slots.add(slot_id)
-                self.GLib.idle_add(
-                    self._persist_software_fallback, slot_id, health.decoder_selected
-                )
+            self._queue_software_fallback_persistence(slot_id, runtime, health, queue)
             if runtime.spec.source_width is None or runtime.spec.source_height is None:
                 caps = pad.get_current_caps()
                 structure = caps.get_structure(0) if caps and caps.get_size() else None
@@ -941,6 +941,7 @@ class GStreamerRenderer(RendererBackend):
 
     def _remove_stream(self, slot_id: str) -> None:
         self._cancel_prepared(slot_id)
+        self._clear_software_fallback(slot_id)
         runtime = self._slots.pop(slot_id, None)
         self._health.pop(slot_id, None)
         if runtime is None or self._pipeline is None or self._compositor is None:
@@ -1015,6 +1016,7 @@ class GStreamerRenderer(RendererBackend):
         ):
             if not prepared.ready or not prepared.last_frame_monotonic or time.monotonic() - prepared.last_frame_monotonic > 8:
                 raise RuntimeError("Replacement stream is still connecting")
+            self._clear_software_fallback(slot_id)
             previous_health = self._health[slot_id]
             old = _PreparedBranch(
                 runtime.spec, runtime.source, runtime.source_queue, runtime.selector_camera_pad,
@@ -1052,6 +1054,7 @@ class GStreamerRenderer(RendererBackend):
             return
         if require_prepared:
             raise RuntimeError("Replacement stream has not been prepared")
+        self._clear_software_fallback(slot_id)
         self._cancel_prepared(slot_id)
         runtime.selector.set_property("active-pad", runtime.selector_placeholder_pad)
         runtime.placeholder_text.set_property("text", f"{spec.camera_name}\nConnecting…")
@@ -1303,11 +1306,12 @@ class GStreamerRenderer(RendererBackend):
         fallback_slots = getattr(self, "_software_fallback_slots", set())
         if slot_id in fallback_slots:
             return
-        if any(
-            (software := working_software_decoder(codec, entry))
-            and software != entry.get("fixed")
-            for codec, entry in getattr(self, "_decoder_policy", {}).get("codecs", {}).items()
-        ):
+        codec = getattr(runtime, "source_codec", None)
+        entry = getattr(self, "_decoder_policy", {}).get("codecs", {}).get(codec, {})
+        software = working_software_decoder(codec, entry)
+        health = self._health.get(slot_id)
+        selected = getattr(health, "decoder_selected", None) or entry.get("fixed")
+        if software and software != selected:
             fallback_slots.add(slot_id)
             self._software_fallback_slots = fallback_slots
             LOGGER.warning(
@@ -1315,21 +1319,69 @@ class GStreamerRenderer(RendererBackend):
                 extra={"slot_id": slot_id},
             )
 
-    def _persist_software_fallback(self, slot_id: str, decoder: str) -> bool:
-        for codec, entry in self._decoder_policy.get("codecs", {}).items():
-            if decoder != working_software_decoder(codec, entry):
-                continue
+    def _clear_software_fallback(self, slot_id: str) -> None:
+        # An explicit source replacement starts a new camera/profile lifetime;
+        # ordinary recovery of the same source retains its fallback choice.
+        getattr(self, "_software_fallback_slots", set()).discard(slot_id)
+        getattr(self, "_persisted_software_fallback_slots", set()).discard(slot_id)
+        getattr(self, "_software_fallback_pending", {}).pop(slot_id, None)
+        getattr(self, "_software_fallback_retry_at", {}).pop(slot_id, None)
+        runtime = self._slots.get(slot_id)
+        if runtime is not None:
+            runtime.source_codec = None
+
+    def _queue_software_fallback_persistence(
+        self, slot_id: str, runtime: _SlotRuntime, health: StreamHealth, queue: Any,
+    ) -> None:
+        if (
+            slot_id not in getattr(self, "_software_fallback_slots", set())
+            or slot_id in getattr(self, "_persisted_software_fallback_slots", set())
+        ):
+            return
+        codec = getattr(runtime, "source_codec", None)
+        decoder = health.decoder_selected
+        entry = self._decoder_policy.get("codecs", {}).get(codec, {})
+        if not codec or not decoder or not software_decoder_passed(codec, entry, decoder):
+            return
+        if slot_id in self._software_fallback_pending or time.monotonic() < self._software_fallback_retry_at.get(slot_id, 0):
+            return
+        request = (runtime, queue, codec, decoder)
+        self._software_fallback_pending[slot_id] = request
+        self.GLib.idle_add(self._persist_software_fallback, slot_id, request)
+
+    def _persist_software_fallback(
+        self, slot_id: str, request: tuple[_SlotRuntime, Any, str, str],
+    ) -> bool:
+        if self._software_fallback_pending.get(slot_id) is not request:
+            return False
+        runtime, queue, codec, decoder = request
+        health = self._health.get(slot_id)
+        if (
+            self._slots.get(slot_id) is not runtime or runtime.source_queue is not queue
+            or health is None or health.decoder_selected != decoder
+            or runtime.source_codec != codec
+        ):
+            self._software_fallback_pending.pop(slot_id, None)
+            return False
+        saved = False
+        try:
+            entry = self._decoder_policy.get("codecs", {}).get(codec, {})
             entry["fixed"] = decoder
             entry["fixed_source"] = "runtime_verified_software"
-            try:
-                if persist_fixed_decoder_fallback(codec, decoder):
-                    LOGGER.warning(
-                        "Persisted working software decoder %s for %s fixed cameras",
-                        decoder, codec, extra={"slot_id": slot_id},
-                    )
-            except OSError:
-                LOGGER.exception("Could not persist working software decoder", extra={"slot_id": slot_id})
-            break
+            saved = persist_fixed_decoder_fallback(codec, decoder)
+            if saved:
+                self._persisted_software_fallback_slots.add(slot_id)
+                LOGGER.warning(
+                    "Persisted working software decoder %s for %s fixed cameras",
+                    decoder, codec, extra={"slot_id": slot_id},
+                )
+        except OSError:
+            LOGGER.exception("Could not persist working software decoder", extra={"slot_id": slot_id})
+        finally:
+            self._software_fallback_pending.pop(slot_id, None)
+            if not saved:
+                # Retry on a later real frame without writing on every buffer.
+                self._software_fallback_retry_at[slot_id] = time.monotonic() + 30
         return False
 
     def _request_failover(self, slot_id: str) -> bool:

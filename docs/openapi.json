@@ -3,7 +3,7 @@
   "info": {
     "title": "Mosaivue API",
     "description": "Local-first RTSP camera wall control plane",
-    "version": "0.1.0b4"
+    "version": "0.1.0b5"
   },
   "paths": {
     "/api/v1/auth/setup/status": {
@@ -1644,6 +1644,23 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/LayoutRevisionGuard"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Payload"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -1718,6 +1735,23 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/LayoutRevisionGuard"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Payload"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -5317,6 +5351,38 @@
         ],
         "title": "LayoutOut"
       },
+      "LayoutRevisionGuard": {
+        "properties": {
+          "expected_revision": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 9.223372036854776e+18,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Revision"
+          },
+          "expected_revision_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Revision Id"
+          }
+        },
+        "type": "object",
+        "title": "LayoutRevisionGuard"
+      },
       "LayoutRevisionOut": {
         "properties": {
           "id": {
@@ -5366,6 +5432,32 @@
       },
       "LayoutUpdate": {
         "properties": {
+          "expected_revision": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 9.223372036854776e+18,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Revision"
+          },
+          "expected_revision_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Revision Id"
+          },
           "name": {
             "anyOf": [
               {

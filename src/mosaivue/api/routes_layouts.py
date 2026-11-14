@@ -8,8 +8,15 @@ from sqlalchemy.exc import IntegrityError
 
 from ..models import Layout
 from ..renderer.rpc import RendererRPCError
-from ..schemas import LayoutCreate, LayoutData, LayoutOut, LayoutRevisionOut, LayoutUpdate
-from ..services.layouts import LayoutService, LayoutValidationError
+from ..schemas import (
+    LayoutCreate,
+    LayoutData,
+    LayoutOut,
+    LayoutRevisionGuard,
+    LayoutRevisionOut,
+    LayoutUpdate,
+)
+from ..services.layouts import LayoutRevisionConflict, LayoutService, LayoutValidationError
 from .dependencies import CSRF, DB, Auth
 
 router = APIRouter(prefix="/layouts", tags=["layouts"])
@@ -91,6 +98,8 @@ async def update_layout(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except LayoutValidationError as exc:
         raise HTTPException(status_code=422, detail={"errors": exc.errors, "warnings": exc.warnings}) from exc
+    except LayoutRevisionConflict as exc:
+        raise HTTPException(status_code=409, detail=exc.detail()) from exc
     except IntegrityError as exc:
         raise HTTPException(status_code=409, detail="A layout with this name already exists") from exc
     result = service.output(layout)
@@ -122,15 +131,22 @@ def list_revisions(layout_id: str, db: DB, _: Auth) -> list[LayoutRevisionOut]:
 
 @router.post("/{layout_id}/revisions/{revision}/restore", response_model=LayoutOut)
 async def restore_revision(
-    layout_id: str, revision: int, request: Request, db: DB, auth: CSRF
+    layout_id: str, revision: int, request: Request, db: DB, auth: CSRF,
+    payload: LayoutRevisionGuard | None = None,
 ) -> LayoutOut:
     service = LayoutService(db)
     try:
-        layout = service.restore_revision(layout_id, revision, user_id=auth.user.id)
+        guard = payload or LayoutRevisionGuard()
+        layout = service.restore_revision(
+            layout_id, revision, user_id=auth.user.id,
+            expected_revision=guard.expected_revision, expected_revision_id=guard.expected_revision_id,
+        )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except LayoutValidationError as exc:
         raise HTTPException(status_code=422, detail={"errors": exc.errors, "warnings": exc.warnings}) from exc
+    except LayoutRevisionConflict as exc:
+        raise HTTPException(status_code=409, detail=exc.detail()) from exc
     result = service.output(layout)
     db.commit()
     await request.app.state.events.publish("layout.changed", result.model_dump(mode="json"))
@@ -138,13 +154,26 @@ async def restore_revision(
 
 
 @router.post("/{layout_id}/activate")
-async def activate_layout(layout_id: str, request: Request, db: DB, _: CSRF) -> dict[str, object]:
+async def activate_layout(
+    layout_id: str, request: Request, db: DB, _: CSRF,
+    payload: LayoutRevisionGuard | None = None,
+) -> dict[str, object]:
     service = LayoutService(db)
     try:
         layout = service.get(layout_id)
         revision = service.current_revision(layout)
         if revision is None:
             raise LayoutValidationError(["Layout has no current revision"])
+        guard = payload or LayoutRevisionGuard()
+        if (
+            guard.expected_revision is not None and guard.expected_revision != layout.current_revision
+        ) or (
+            guard.expected_revision_id is not None and guard.expected_revision_id != revision.id
+        ):
+            raise LayoutRevisionConflict(
+                guard.expected_revision, layout.current_revision, guard.expected_revision_id, revision.id,
+            )
+        target_revision, target_revision_id = revision.revision, revision.id
         data = LayoutData.model_validate(revision.data)
         errors, warnings = service.validate(data)
         if errors:
@@ -153,11 +182,13 @@ async def activate_layout(layout_id: str, request: Request, db: DB, _: CSRF) -> 
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except LayoutValidationError as exc:
         raise HTTPException(status_code=422, detail={"errors": exc.errors, "warnings": exc.warnings}) from exc
+    except LayoutRevisionConflict as exc:
+        raise HTTPException(status_code=409, detail=exc.detail()) from exc
 
     previous = db.scalar(select(Layout).where(Layout.active.is_(True)))
     try:
         renderer_status = await request.app.state.renderer.call(
-            "apply_layout", layout_id=layout.id, revision=layout.current_revision
+            "apply_layout", layout_id=layout.id, revision=target_revision, revision_id=target_revision_id,
         )
     except RendererRPCError as exc:
         if previous and previous.id != layout.id:
@@ -166,9 +197,20 @@ async def activate_layout(layout_id: str, request: Request, db: DB, _: CSRF) -> 
                     "apply_layout", layout_id=previous.id, revision=previous.current_revision
                 )
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-    service.activate(layout_id)
+    try:
+        layout = service.activate(layout_id, revision_number=target_revision, revision_id=target_revision_id)
+    except (KeyError, LayoutValidationError, LayoutRevisionConflict) as exc:
+        # The renderer may have loaded the requested revision before an import
+        # replaced/deleted its database identity. Do not claim that the new
+        # saved configuration was the one just applied.
+        detail = exc.detail() if isinstance(exc, LayoutRevisionConflict) else {"code": "layout_changed_during_apply"}
+        detail.update({
+            "message": "The requested revision reached the renderer, but saved configuration changed during application. Reload to inspect the current wall.",
+            "renderer_applied": True,
+        })
+        raise HTTPException(status_code=409, detail=detail) from exc
     db.commit()
     await request.app.state.events.publish(
-        "layout.activated", {"id": layout.id, "revision": layout.current_revision}
+        "layout.activated", {"id": layout.id, "revision": target_revision, "revision_id": target_revision_id}
     )
     return {"layout": service.output(layout).model_dump(mode="json"), "renderer": renderer_status}

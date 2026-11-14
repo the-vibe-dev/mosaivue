@@ -36,6 +36,8 @@ mosaivue-support*.zip
 *.pem
 *.key
 rollout/
+.private-reviews/
+docs/review/
 
 # Editors / OS
 .vscode/

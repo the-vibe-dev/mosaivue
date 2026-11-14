@@ -165,6 +165,7 @@ export type RendererStatus = {
   streams: Record<string, StreamHealth>;
   active_layout_id?: string | null;
   active_revision?: number | null;
+  active_revision_id?: string | null;
   focused?: boolean;
   capabilities?: RendererCapabilities;
   error?: string;

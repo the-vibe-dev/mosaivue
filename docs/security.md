@@ -32,7 +32,7 @@ Configuration backups do not include web users/sessions, `/etc/mosaivue/config.j
 
 Restore validates nested configuration and references before replacing data and rolls back failed imports. A sanitized merge preserves matching local credentials; a sanitized replacement cannot recover omitted passwords. Uploaded archives are bounded to 100 MiB, and the expanded configuration member is bounded to 32 MiB. Unexpected SQL/library exceptions are not echoed to the browser; safe validation messages omit secret input values.
 
-API restore commits configuration before requesting renderer reapplication. It reports a warning if the configuration is saved but the wall cannot be applied. CLI import/restore requires an explicit layout application or renderer restart afterward. See the [candidate upgrade guide](review/upgrade.md).
+API restore commits configuration before requesting renderer reapplication. It reports a warning if the configuration is saved but the wall cannot be applied. CLI import/restore requires an explicit layout application or renderer restart afterward. See the [installation guide](install.md).
 
 ## Network destinations and URL handling
 
@@ -64,4 +64,4 @@ Structured logs redact URL userinfo and named sensitive query values. Support bu
 
 Known settings now have typed, backwards-compatible validation; invalid values receive field-specific errors without echoing their contents. Atomic settings/renderer-selection writes preserve permitted owner/group access. The API bounds preview/probe decoding per process and checks authentication, camera state and preview policy before using its short image cache. These controls do not limit custom multiple-process deployments or the number of identical waiting HTTP clients.
 
-A complete audit-log workflow, account roles, scoped integration tokens and full stream-URI encryption remain outstanding. Continue updating camera firmware, multimedia libraries and decoder drivers. The [current review](review/current-report.md), [validation record](review/current-validation.md) and [roadmap](../ROADMAP.md) distinguish completed work from remaining items.
+A complete audit-log workflow, account roles, scoped integration tokens and full stream-URI encryption remain outstanding. Continue updating camera firmware, multimedia libraries and decoder drivers. [Build verification](../BUILD-VERIFICATION.md) and the [roadmap](../ROADMAP.md) distinguish completed work from remaining items.

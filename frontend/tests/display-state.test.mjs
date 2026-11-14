@@ -46,6 +46,20 @@ test('missing feature data remains unknown even if a player is available', () =>
   assert.equal(featureSupport(undefined, 'labels'), undefined);
 });
 
+test('shared profile dimension changes remain pending even when layout revision matches', () => {
+  const result = layoutDisplayState(layout, { ...status, output: { width: 1920, height: 1080 } }, { width: 1280, height: 720 });
+  assert.equal(result.kind, 'pending');
+  assert.equal(result.label, 'Saved display size pending');
+  assert.match(result.detail, /1280 × 720; renderer size 1920 × 1080/);
+});
+
+test('same-number imported revision identity is pending, with compatibility for old renderers', () => {
+  const identified = { ...layout, revision: { id: 'new-record' } };
+  assert.equal(layoutDisplayState(identified, { ...status, active_revision_id: 'old-record' }).kind, 'pending');
+  assert.equal(layoutDisplayState(identified, { ...status, active_revision_id: 'new-record' }).kind, 'applied');
+  assert.equal(layoutDisplayState(identified, status).kind, 'applied');
+});
+
 test('profile creation gates unsupported controls but leaves working dimensions editable', () => {
   const html = displayProfileForm(['HDMI-A-1'], { name: 'fixture', available: true, feature_support: { output_selection: false, portrait: false, refresh_rate: false, prevent_blanking: false } });
   for (const name of ['output', 'refresh', 'rotation', 'blanking']) assert.match(html, new RegExp(`<[^>]+name="${name}"[^>]+disabled`));

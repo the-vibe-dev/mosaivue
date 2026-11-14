@@ -1,5 +1,7 @@
 # Public beta: v0.1.0b2
 
+> **Historical published-beta record.** This document preserves the earlier b2 hardware narrative. See [build verification](../BUILD-VERIFICATION.md) for the unpublished b5 candidate. Detailed b4 rollout evidence is retained locally under `.private-reviews/`.
+
 This document records the tested hardware scope and remaining limits for public beta `v0.1.0b2`. It follows the private `v0.1.0b1` staging release with the same renderer and installer behavior.
 
 ## Tested path

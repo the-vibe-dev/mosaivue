@@ -36,3 +36,11 @@ Fixed pixel overrides take precedence over relative geometry on the physical dis
 - `cover`: preserve ratio and crop.
 - `stretch`: fill the rectangle.
 - `native`: stored for compatibility, but currently falls back to contain/letterbox in physical backends. The editor disables it when unsupported.
+
+## Concurrent editing and display profiles (b5)
+
+The editor sends the revision number and revision UUID it loaded when saving, restoring history or applying. A stale operation returns HTTP 409; local changes remain available for explicit reload or Save as copy. Name, description and profile-association saves also advance history. Legacy API callers can omit the guards but retain last-writer-wins behavior.
+
+A layout can use a shared display profile or custom dimensions. The profile's width/height take precedence over LayoutData dimensions, matching the renderer. The editor, layout list, dashboard and remote use that order for schematic previews. Shared profiles can be created and edited on the Display page; unsupported physical metadata is preserved. Profile deletion is blocked while layouts reference it. Shared profile edits require deliberate reapplication of affected walls and do not create a new revision for every layout.
+
+Apply pins the requested geometry revision and row identity. A newer draft saved during application remains pending. The profile association and referenced camera/group/profile contents are still mutable, so this is not a complete configuration snapshot. Historical restore retains current layout name, description and profile association. A renderer-accepted request followed by an import/deletion race is reported explicitly; reload and inspect the actual wall before another apply.

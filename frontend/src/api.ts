@@ -16,6 +16,7 @@ export function apiErrorMessage(detail: unknown, fallback: string): string {
   if (typeof value === 'object' && value && 'errors' in value && Array.isArray(value.errors)) {
     return value.errors.filter((item): item is string => typeof item === 'string').join('; ') || fallback;
   }
+  if (typeof value === 'object' && value && 'message' in value && typeof value.message === 'string') return value.message.slice(0, 1000);
   if (Array.isArray(value)) {
     return value.map((item: { loc?: unknown[]; msg?: string }) => {
       const field = item.loc?.filter((part) => part !== 'body').join(' → ');
@@ -24,6 +25,18 @@ export function apiErrorMessage(detail: unknown, fallback: string): string {
   }
   if (typeof value === 'string' && value.trim() && !value.trim().startsWith('<')) return value.slice(0, 1000);
   return fallback;
+}
+
+export type LayoutRevisionConflict = { code: 'layout_revision_conflict' | 'layout_changed_during_apply'; message: string; expected_revision?: number | null; current_revision?: number | null; expected_revision_id?: string | null; current_revision_id?: string | null; renderer_applied?: boolean };
+
+export function layoutRevisionConflict(error: unknown): LayoutRevisionConflict | null {
+  if (!(error instanceof ApiError) || error.status !== 409) return null;
+  const detail = error.detail && typeof error.detail === 'object' && 'detail' in error.detail ? error.detail.detail : error.detail;
+  if (!detail || typeof detail !== 'object' || !('code' in detail) || !['layout_revision_conflict', 'layout_changed_during_apply'].includes(String(detail.code))) return null;
+  const conflict = detail as LayoutRevisionConflict;
+  if (typeof conflict.message !== 'string') return null;
+  if (conflict.code === 'layout_changed_during_apply') return conflict.renderer_applied === true ? conflict : null;
+  return (conflict.expected_revision == null || Number.isInteger(conflict.expected_revision)) && Number.isInteger(conflict.current_revision) ? conflict : null;
 }
 
 export function setCsrf(value: string): void {

@@ -45,6 +45,7 @@ class RendererController:
         self.output_height = output_height
         self.active_layout_id: str | None = None
         self.active_revision: int | None = None
+        self.active_revision_id: str | None = None
         self.current_specs: dict[str, StreamSpec] = {}
         self.rotation_tasks: dict[str, asyncio.Task[None]] = {}
         self.rotation_cursors: dict[str, RotationCursor] = defaultdict(RotationCursor)
@@ -54,7 +55,9 @@ class RendererController:
         self.focus_restore_task: asyncio.Task[None] | None = None
         self._lock = asyncio.Lock()
 
-    async def apply_layout(self, layout_id: str, revision: int | None = None) -> dict[str, Any]:
+    async def apply_layout(
+        self, layout_id: str, revision: int | None = None, *, revision_id: str | None = None,
+    ) -> dict[str, Any]:
         async with self._lock:
             with self.session_factory() as db:
                 layout = db.get(Layout, layout_id)
@@ -69,6 +72,9 @@ class RendererController:
                 )
                 if layout_revision is None:
                     raise KeyError("Layout revision not found")
+                if revision_id is not None and layout_revision.id != revision_id:
+                    raise ValueError("Layout revision identity changed; reload the saved layout before applying")
+                selected_revision_id = layout_revision.id
                 profile = db.get(DisplayProfile, layout.display_profile_id) if layout.display_profile_id else None
                 target_width = profile.width if profile else layout_revision.data.get("output_width")
                 target_height = profile.height if profile else layout_revision.data.get("output_height")
@@ -84,6 +90,7 @@ class RendererController:
             self.rotation_cursors = defaultdict(RotationCursor, cursors)
             self.active_layout_id = layout_id
             self.active_revision = revision_number
+            self.active_revision_id = selected_revision_id
             self.focused = False
             for slot_id, group_id in rotation_slots.items():
                 self.rotation_tasks[slot_id] = asyncio.create_task(
@@ -305,6 +312,8 @@ class RendererController:
                         )
                     )
                     if revision:
+                        if self.active_revision_id is not None and revision.id != self.active_revision_id:
+                            raise ValueError("Applied layout revision was replaced; reapply the saved layout")
                         raw = next(
                             (item for item in revision.data.get("slots", []) if item.get("id") == slot_id),
                             None,
@@ -474,7 +483,9 @@ class RendererController:
         try:
             await asyncio.sleep(duration_seconds)
             if self.focused and self.active_layout_id:
-                await self.apply_layout(self.active_layout_id, self.active_revision)
+                await self.apply_layout(
+                    self.active_layout_id, self.active_revision, revision_id=self.active_revision_id,
+                )
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -486,7 +497,9 @@ class RendererController:
     async def restore_layout(self) -> dict[str, Any]:
         if not self.active_layout_id:
             raise ValueError("No active layout to restore")
-        return await self.apply_layout(self.active_layout_id, self.active_revision)
+        return await self.apply_layout(
+            self.active_layout_id, self.active_revision, revision_id=self.active_revision_id,
+        )
 
     def pause_rotation(self, group_id: str) -> None:
         self.rotation_paused.add(group_id)
@@ -509,6 +522,7 @@ class RendererController:
             {
                 "active_layout_id": self.active_layout_id,
                 "active_revision": self.active_revision,
+                "active_revision_id": self.active_revision_id,
                 "focused": self.focused,
                 "focus_auto_restore": bool(self.focus_restore_task),
                 "rotation_slots": list(self.rotation_tasks),

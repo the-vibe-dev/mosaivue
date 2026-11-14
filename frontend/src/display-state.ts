@@ -9,7 +9,7 @@ export type LayoutDisplayState = {
 };
 
 /** Database active is a startup preference, not proof that the saved revision is running. */
-export function layoutDisplayState(layout: Pick<Layout, 'id' | 'current_revision' | 'active'>, renderer?: RendererStatus | null): LayoutDisplayState {
+export function layoutDisplayState(layout: Pick<Layout, 'id' | 'current_revision' | 'active'> & Partial<Pick<Layout, 'revision'>>, renderer?: RendererStatus | null, expectedOutput?: { width: number; height: number }): LayoutDisplayState {
   if (!renderer || renderer.state === 'UNAVAILABLE' || renderer.active_layout_id === undefined) {
     return { kind: 'unknown', label: 'Display state unavailable', detail: `Revision ${layout.current_revision} is saved. Check the renderer before assuming it is displayed.`, action: 'Apply', tone: 'warn' };
   }
@@ -24,6 +24,12 @@ export function layoutDisplayState(layout: Pick<Layout, 'id' | 'current_revision
   }
   if (renderer.active_revision < layout.current_revision) {
     return { kind: 'pending', label: 'Saved changes pending', detail: `Saved revision ${layout.current_revision}; renderer revision ${renderer.active_revision}.${renderer.focused ? ' Camera focus is active. Applying ends focus.' : ' Apply to update the display.'}`, action: 'Apply saved changes', tone: 'warn' };
+  }
+  if (renderer.active_revision_id && layout.revision?.id && renderer.active_revision_id !== layout.revision.id) {
+    return { kind: 'pending', label: 'Saved changes pending', detail: 'The saved revision record differs from the one applied by the renderer, even though its revision number is the same. Apply to load the restored or imported version.', action: 'Apply saved changes', tone: 'warn' };
+  }
+  if (expectedOutput && renderer.output && (expectedOutput.width !== renderer.output.width || expectedOutput.height !== renderer.output.height)) {
+    return { kind: 'pending', label: 'Saved display size pending', detail: `Saved render size ${expectedOutput.width} × ${expectedOutput.height}; renderer size ${renderer.output.width} × ${renderer.output.height}. Reapply to load the saved dimensions.${renderer.focused ? ' Applying ends focus.' : ''}`, action: 'Apply saved changes', tone: 'warn' };
   }
   if (renderer.focused) {
     return { kind: 'focused', label: 'Camera focus active', detail: `Revision ${renderer.active_revision} is the saved wall behind camera focus. Applying restores the wall and ends focus.`, action: 'Restore saved wall', tone: 'warn' };

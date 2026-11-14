@@ -20,6 +20,34 @@ class LayoutValidationError(ValueError):
         self.warnings = warnings or []
 
 
+class LayoutRevisionConflict(ValueError):
+    def __init__(
+        self,
+        expected_revision: int | None,
+        current_revision: int,
+        expected_revision_id: str | None = None,
+        current_revision_id: str | None = None,
+    ):
+        super().__init__(
+            "This layout changed after it was loaded. "
+            "Reload the latest revision or save your work as a copy."
+        )
+        self.expected_revision = expected_revision
+        self.current_revision = current_revision
+        self.expected_revision_id = expected_revision_id
+        self.current_revision_id = current_revision_id
+
+    def detail(self) -> dict[str, Any]:
+        return {
+            "code": "layout_revision_conflict",
+            "message": str(self),
+            "expected_revision": self.expected_revision,
+            "current_revision": self.current_revision,
+            "expected_revision_id": self.expected_revision_id,
+            "current_revision_id": self.current_revision_id,
+        }
+
+
 class LayoutService:
     def __init__(self, db: Session):
         self.db = db
@@ -68,42 +96,88 @@ class LayoutService:
         return layout
 
     def update(self, layout_id: str, payload: LayoutUpdate, user_id: str | None = None) -> Layout:
-        layout = self.get(layout_id)
+        layout = self._claim_revision(layout_id, payload.expected_revision, payload.expected_revision_id)
         if "display_profile_id" in payload.model_fields_set:
             self._validate_display_profile(payload.display_profile_id)
+        changed = (
+            payload.data is not None
+            or payload.name is not None
+            or payload.description is not None
+            or "display_profile_id" in payload.model_fields_set
+        )
+        if not changed:
+            return layout
+        data = payload.data
+        if data is None:
+            current = self.current_revision(layout)
+            if current is None:
+                raise LayoutValidationError(["Layout has no current revision"])
+            data = LayoutData.model_validate(current.data)
+        errors, warnings = self.validate(data)
+        if errors:
+            raise LayoutValidationError(errors, warnings)
+        # Even metadata-only saves consume a revision, otherwise a stale editor
+        # could miss a renamed/reassigned wall and overwrite its newer metadata.
+        # The claim holds the writer lock until the caller commits or rolls back.
+        newest_revision = self.db.scalar(
+            select(func.max(LayoutRevision.revision)).where(LayoutRevision.layout_id == layout.id)
+        ) or 0
+        next_revision = newest_revision + 1
         if payload.name is not None:
             layout.name = payload.name
         if payload.description is not None:
             layout.description = payload.description
         if "display_profile_id" in payload.model_fields_set:
             layout.display_profile_id = payload.display_profile_id
-        if payload.data is not None:
-            errors, warnings = self.validate(payload.data)
-            if errors:
-                raise LayoutValidationError(errors, warnings)
-            # A restored/exported configuration can intentionally select an
-            # older revision while retaining newer drafts. Never reuse one of
-            # those existing revision numbers when saving or restoring history.
-            newest_revision = self.db.scalar(
-                select(func.max(LayoutRevision.revision)).where(LayoutRevision.layout_id == layout.id)
-            ) or 0
-            next_revision = newest_revision + 1
-            revision = LayoutRevision(
-                layout_id=layout.id,
-                revision=next_revision,
-                status=payload.status,
-                data=payload.data.model_dump(mode="json"),
-                created_by=user_id,
-            )
-            self.db.add(revision)
-            layout.current_revision = next_revision
-            self.db.flush()
-            self._prune(layout.id)
+        self.db.add(LayoutRevision(
+            layout_id=layout.id, revision=next_revision, status=payload.status,
+            data=data.model_dump(mode="json"), created_by=user_id,
+        ))
+        layout.current_revision = next_revision
         self.db.flush()
+        self._prune(layout.id)
         return layout
 
-    def restore_revision(self, layout_id: str, revision_number: int, user_id: str | None = None) -> Layout:
-        self.get(layout_id)
+    def _claim_revision(
+        self, layout_id: str, expected_revision: int | None, expected_revision_id: str | None = None,
+    ) -> Layout:
+        # UPDATE is the synchronization point, not a preceding SELECT. On SQLite
+        # it reserves the writer before history allocation or metadata changes.
+        # A second guarded writer rechecks its predicate after the first commits.
+        statement = update(Layout).where(Layout.id == layout_id).values(
+            current_revision=Layout.current_revision, updated_at=Layout.updated_at,
+        )
+        if expected_revision is not None:
+            statement = statement.where(Layout.current_revision == expected_revision)
+        if expected_revision_id is not None:
+            statement = statement.where(select(LayoutRevision.id).where(
+                LayoutRevision.layout_id == Layout.id,
+                LayoutRevision.revision == Layout.current_revision,
+                LayoutRevision.id == expected_revision_id,
+            ).exists())
+        with self.db.no_autoflush:
+            result = self.db.execute(statement.execution_options(synchronize_session=False))
+            current = self.db.scalar(select(Layout.current_revision).where(Layout.id == layout_id))
+            if current is None:
+                raise KeyError("Layout not found")
+            if result.rowcount != 1:
+                current_id = self.db.scalar(select(LayoutRevision.id).where(
+                    LayoutRevision.layout_id == layout_id, LayoutRevision.revision == current,
+                ))
+                raise LayoutRevisionConflict(expected_revision, current, expected_revision_id, current_id)
+            # An earlier request read or service call may have populated the
+            # identity map. Reload after the claim so legacy metadata-only saves
+            # clone the newest geometry rather than reverting a concurrent edit.
+            layout = self.db.get(Layout, layout_id, populate_existing=True)
+            if layout is None:
+                raise KeyError("Layout not found")
+            return layout
+
+    def restore_revision(
+        self, layout_id: str, revision_number: int, user_id: str | None = None,
+        *, expected_revision: int | None = None, expected_revision_id: str | None = None,
+    ) -> Layout:
+        self._claim_revision(layout_id, expected_revision, expected_revision_id)
         source = self.db.scalar(
             select(LayoutRevision).where(
                 LayoutRevision.layout_id == layout_id,
@@ -115,15 +189,31 @@ class LayoutService:
         data = LayoutData.model_validate(source.data)
         return self.update(
             layout_id,
-            LayoutUpdate(data=data, status="draft"),
+            LayoutUpdate(
+                data=data, status="draft", expected_revision=expected_revision,
+                expected_revision_id=expected_revision_id,
+            ),
             user_id=user_id,
         )
 
-    def activate(self, layout_id: str) -> Layout:
-        layout = self.get(layout_id)
-        revision = self.current_revision(layout)
+    def activate(
+        self, layout_id: str, *, revision_number: int | None = None, revision_id: str | None = None,
+    ) -> Layout:
+        # Reserve a writer only after the caller has finished the renderer RPC.
+        # Keep the chosen history identity stable while committing active flags;
+        # a newer draft is allowed and remains the current editable revision.
+        layout = self._claim_revision(layout_id, None)
+        revision = self.db.scalar(select(LayoutRevision).where(
+            LayoutRevision.layout_id == layout_id,
+            LayoutRevision.revision == (revision_number if revision_number is not None else layout.current_revision),
+        ))
         if revision is None:
             raise LayoutValidationError(["Layout has no revision"])
+        if revision_id is not None and revision.id != revision_id:
+            current = self.current_revision(layout)
+            raise LayoutRevisionConflict(
+                revision_number, layout.current_revision, revision_id, current.id if current else None,
+            )
         data = LayoutData.model_validate(revision.data)
         errors, warnings = self.validate(data)
         if errors:
@@ -132,6 +222,7 @@ class LayoutService:
         layout.active = True
         revision.status = "active"
         self.db.flush()
+        self.db.refresh(layout)
         return layout
 
     def delete(self, layout_id: str) -> None:

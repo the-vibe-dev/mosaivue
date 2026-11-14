@@ -709,6 +709,11 @@ body.editor-mode .editor-shell { height: 100vh; margin: 0; }
 .remote-layouts small { line-height: 1.5; }
 .restore-mode { margin-top: 18px; }
 .restore-mode .checkbox-row { margin: 10px 0; }
+.layout-output-fields { margin: 10px 0; }
+.profile-layout-links { margin-top: 5px; color: var(--muted); font-size: 11px; line-height: 1.6; }
+.conflict-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.stage-ruler { left: 16px; right: 16px; top: 12px; display: flex; justify-content: space-between; gap: 12px; }
+.stage-ruler [data-render-dimensions] { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .editor-pane-controls, .editor-pane-close, .editor-pane-close-row { display: none; }
 @media (max-width: 900px) {
   .editor-workspace { position: relative; overflow: hidden; }
@@ -722,6 +727,7 @@ body.editor-mode .editor-shell { height: 100vh; margin: 0; }
   .toolbar-actions { margin-left: auto; flex-wrap: wrap; }
 }
 @media (max-width: 600px) {
+  .editor-stage { padding-top: 38px; }
   .editor-display-state { align-items: flex-start; padding: 8px 10px; font-size: 11px; }
   .editor-display-state .button { padding: 8px; white-space: normal; max-width: 90px; }
   .editor-display-state .button .icon { width: 16px; height: 16px; }

@@ -2,9 +2,36 @@
 
 All notable changes follow a Keep a Changelog-style format. Version numbers use semantic versioning after the first stable release.
 
+## [0.1.0b5] - 2026-11-13 - integrated-b4 follow-up candidate
+
+Built from the newly supplied integrated b4 archive. No database schema migration. Python/source version `0.1.0b5`, frontend `0.1.0-beta.5`, Debian `0.1.0~b5`. This candidate is unpublished and has not been installed on an appliance. Earlier review and physical evidence is retained locally under the Git-ignored `.private-reviews/` directory.
+
+### Added and improved
+
+- Atomic optional revision-number/UUID preconditions, metadata revision advancement and recoverable editor reload/save-copy conflicts.
+- Activation pinned to the requested saved history identity, with separate newest-draft state and explicit conflict feedback if configuration changes after renderer acceptance.
+- Shared display-profile creation/editing/assignment, custom dimensions, profile-aware schematic previews and deletion protection for referenced profiles.
+- Soak sampler source/run/version attribution and endpoint overrides; analyzer for coverage, gaps, stalls, restarts, rotation discontinuities and separate source/backend/sink windows.
+- Updated review, competitor comparison, finding register, acceptance and upgrade guidance; prior review records retained.
+
+### Fixed
+
+- Shared decoder-policy temporary filenames and unlocked merges that could lose concurrent verified codec choices.
+- Reprobes dropping a still-passing secondary software decoder; stale verification metadata attached to a different decoder.
+- Failed persistence suppressing future attempts, obsolete source callbacks and fallback state leaking across explicit source replacement.
+- Installer deletion of the last decoder policy when a probe command fails.
+- Stale shared-profile dimensions causing permanent false pending state in an open editor.
+- A post-application import/deletion conflict being presented as a normal failed apply despite renderer acceptance.
+
+### Evidence and limits
+
+- 442 Python tests passed with three environment-dependent skips; 53 JavaScript tests passed. Combined statement/branch coverage is 65.10%, versus 63.11% on the upload.
+- Ten browser scenarios are retained but were not rendered here; the supplied eight b4 browser passes remain attributed to their original host/build.
+- No candidate root/systemd installation, ARM/native-media execution or physical soak was performed. Shared camera/group/profile contents and layout-profile association still lack an immutable whole-configuration generation.
+
 ## [0.1.0b4] - 2026-11-13 - follow-up review candidate
 
-Built from the newly supplied b3 archive. No database migration was added. Python/source version is `0.1.0b4`; frontend is `0.1.0-beta.4`; Debian is `0.1.0~b4`. This candidate has not been deployed or published by this review. Supplied b3 integration/appliance evidence is retained unchanged in `docs/review/supplied-b3-build-verification.md`.
+Built from the newly supplied b3 archive. No database migration was added. Python/source version is `0.1.0b4`; frontend is `0.1.0-beta.4`; Debian is `0.1.0~b4`. Earlier b3 integration and appliance evidence is retained locally under `.private-reviews/`.
 
 ### Added and improved
 
@@ -29,7 +56,7 @@ Built from the newly supplied b3 archive. No database migration was added. Pytho
 ### Evidence and open work
 
 - Current Python suite: 358 passed, three environment/privilege skips; JavaScript: 35 passed. Current combined statement/branch coverage is 62.44% versus 59.50% on the uploaded archive.
-- Browser interaction and b4 physical/privileged installation acceptance remain unexecuted here. See [current validation](docs/review/current-validation.md) for exact scope and [the roadmap](ROADMAP.md) for unresolved capability and architecture gaps.
+- Browser interaction and b4 physical/privileged installation acceptance remained unexecuted for that review. See [build verification](BUILD-VERIFICATION.md) and [the roadmap](ROADMAP.md) for current limits.
 
 ## [0.1.0b3] - 2026-11-13 — review candidate
 
@@ -40,7 +67,7 @@ This is a locally delivered review candidate. It has not been published automati
 - Known-endpoint ONVIF Media1 profile inspection/import with administrator authentication, bounded SOAP exchanges and credential-safe profile metadata. WS-Discovery, Media2 and PTZ are outside this implementation.
 - Browser schedules management, camera/layout duplication and filtering, and uniform 2×2, 3×3 and 4×4 starting grids.
 - `MOSAIVUE_OUTPUT_FPS` for GStreamer compositor output: integer 1–60, with the existing 5 FPS default retained. This does not change camera capture FPS or monitor refresh.
-- Review report, competitor/gap analysis, regression evidence and candidate upgrade guidance in `docs/review/`.
+- Review reports, competitor analysis and regression evidence are retained locally under `.private-reviews/`.
 
 ### Fixed
 
@@ -69,7 +96,7 @@ This is a locally delivered review candidate. It has not been published automati
 
 ### Qualification and known boundaries
 
-- The [validation record](docs/review/validation.md) distinguishes completed software checks from browser, systemd installer and physical camera/display trials still required.
+- [Build verification](BUILD-VERIFICATION.md) distinguishes completed software checks from browser, systemd installer and physical camera/display trials still required.
 - Existing site hardware evidence applies to earlier builds and does not automatically qualify this candidate.
 - Group-level `placeholder` failure policy and synchronized rotation remain unimplemented; legacy placeholder settings behave as Hold.
 - Configuration backups exclude appliance settings, custom trust files, web accounts/sessions and OS/service provisioning. Reapply active layouts after camera/group edits and CLI configuration import/restore.

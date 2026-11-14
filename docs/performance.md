@@ -69,4 +69,4 @@ A 24-hour initial run followed by a longer 72-hour candidate soak is a proposed 
 
 Earlier site results for Pi 3B+/OMXPlayer, ROCK Pi 4B+/GStreamer and Ubuntu are described in the [beta notes](beta-release.md). They remain evidence for those earlier builds and source mixes. This review did not run the new candidate on a physical Pi, ROCK Pi, GPU display or live private camera; Pi 4/5 output and broader stream mixes remain unqualified.
 
-The [current review report](review/current-report.md) separates software verification from outstanding browser, installer and hardware acceptance. Use its [validation record](review/current-validation.md) for completed checks and environment limitations. Supplied b3 Pi upgrade/reboot and browser evidence is preserved in [its original record](review/supplied-b3-build-verification.md).
+[Build verification](../BUILD-VERIFICATION.md) separates software checks from browser, installer and hardware acceptance. Detailed review history, including earlier Pi observations, is retained locally under the Git-ignored `.private-reviews/` directory.

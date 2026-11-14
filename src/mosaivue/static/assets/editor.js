@@ -1,10 +1,11 @@
-import { api } from './api.js';
+import { api, layoutRevisionConflict } from './api.js';
 import { featureSupport, layoutDisplayState } from './display-state.js';
 import { newId } from './ids.js';
 import { setGeometry } from './forms.js';
-import { setNavigationGuard } from './router.js';
+import { bindLayoutOutputFields, layoutOutputFields, pixelPlacementWarning, resolveLayoutOutput, validateLayoutOutputPlacement } from './layout-output.js';
+import { navigate, setNavigationGuard } from './router.js';
 import { gridGeometry, templateGeometry } from './templates.js';
-import { escapeHtml, icon, toast } from './ui.js';
+import { escapeHtml, icon, openDialog, toast } from './ui.js';
 function cloneData(value) {
     return structuredClone(value);
 }
@@ -50,7 +51,9 @@ export class LayoutEditor {
     groups;
     onSaved;
     rendererStatus;
+    displayProfiles;
     data;
+    displayProfileId;
     selected = new Set();
     selectedCameraId = null;
     history = [];
@@ -65,6 +68,7 @@ export class LayoutEditor {
     busy = false;
     destroyed = false;
     saveError = '';
+    conflict = null;
     mobilePane = null;
     beforeUnloadHandler = (event) => {
         if (!this.isDirty())
@@ -72,13 +76,14 @@ export class LayoutEditor {
         event.preventDefault();
         event.returnValue = '';
     };
-    constructor(host, layout, cameras, groups, onSaved, rendererStatus) {
+    constructor(host, layout, cameras, groups, onSaved, rendererStatus, displayProfiles = []) {
         this.host = host;
         this.layout = layout;
         this.cameras = cameras;
         this.groups = groups;
         this.onSaved = onSaved;
         this.rendererStatus = rendererStatus;
+        this.displayProfiles = displayProfiles;
         this.data = cloneData(layout.revision?.data ?? {
             schema_version: 1,
             slots: [],
@@ -88,7 +93,8 @@ export class LayoutEditor {
             grid_columns: 12,
             grid_rows: 12,
         });
-        this.savedData = JSON.stringify(this.data);
+        this.displayProfileId = layout.display_profile_id ?? null;
+        this.savedData = this.draftSignature();
         this.recordHistory();
     }
     mount() {
@@ -110,10 +116,13 @@ export class LayoutEditor {
         if (this.destroyed)
             return;
         const selectedSlots = this.data.slots.filter((slot) => this.selected.has(slot.id));
-        const outputWidth = this.data.output_width ?? 1920;
-        const outputHeight = this.data.output_height ?? 1080;
+        const output = resolveLayoutOutput(this.data, this.displayProfileId, this.displayProfiles, this.rendererStatus);
+        const outputWidth = output.width;
+        const outputHeight = output.height;
+        const pixelWarning = pixelPlacementWarning(this.data, output);
         const ratio = `${outputWidth} / ${outputHeight}`;
-        const display = layoutDisplayState(this.layout, this.rendererStatus);
+        const savedOutput = resolveLayoutOutput(this.layout.revision?.data, this.layout.display_profile_id, this.displayProfiles, this.rendererStatus);
+        const display = layoutDisplayState(this.layout, this.rendererStatus, savedOutput);
         this.host.innerHTML = `
       <section class="editor-shell ${this.mobilePane === 'library' ? 'library-open' : this.mobilePane === 'inspector' ? 'inspector-open' : ''}">
         <header class="editor-toolbar">
@@ -133,13 +142,14 @@ export class LayoutEditor {
             <button class="toolbar-button ${this.showPreviews ? 'is-active' : ''}" data-action="toggle-previews">${icon('camera')} Preview</button>
           </div>
           <div class="toolbar-cluster toolbar-actions">
+            <button class="button button-ghost" data-action="layout-settings">${icon('display')} Layout settings</button>
             <button class="button button-ghost" data-action="revert">Revert</button>
-            <button class="button button-secondary" data-action="save">${icon('save')} Save draft</button>
-            <button class="button button-primary" data-action="save-apply">${icon('play')} ${this.isDirty() ? 'Save & apply' : display.action}</button>
+            <button class="button button-secondary" data-action="save" ${this.conflict ? 'disabled' : ''}>${icon('save')} Save draft</button>
+            <button class="button button-primary" data-action="save-apply" ${this.conflict ? 'disabled' : ''}>${icon('play')} ${this.isDirty() ? 'Save & apply' : display.action}</button>
           </div>
         </header>
         <div class="editor-display-state display-notice display-notice-${display.tone}" role="status" data-display-state="${display.kind}">
-          <div><strong>${escapeHtml(display.label)}</strong><p>${escapeHtml(display.detail)} Save draft stores edits without changing the wall.</p>${this.saveError ? `<p class="save-error" role="alert">${escapeHtml(this.saveError)}</p>` : ''}</div>
+          <div><strong>${escapeHtml(display.label)}</strong><p>${escapeHtml(display.detail)} Save draft stores edits without changing the wall.</p>${this.saveError ? `<p class="save-error" role="alert" data-save-error>${escapeHtml(this.saveError)}</p>` : ''}${this.conflict ? '<div class="conflict-actions"><button class="button button-secondary button-small" data-action="save-copy">Save my edits as a copy</button><button class="button button-ghost button-small" data-action="revert">Load latest saved version</button></div>' : ''}</div>
           <button class="button button-ghost button-small" data-action="refresh-display">${icon('refresh')} Refresh status</button>
         </div>
         <div class="editor-workspace">
@@ -168,9 +178,9 @@ export class LayoutEditor {
             </div>
           </aside>
           <main class="editor-stage">
-            <div class="stage-ruler"><span>${outputWidth} × ${outputHeight}</span><span>${this.data.slots.length} slot${this.data.slots.length === 1 ? '' : 's'}</span></div>
-            <p class="editor-preview-note">Editing preview. ${featureSupport(this.rendererStatus?.capabilities, 'labels') === true ? 'Use stream health to check playback.' : 'Camera labels are for editing; label playback is unsupported or not reported by the renderer.'} <a href="/renderer" data-route>Renderer capabilities</a></p>
-            <div class="display-frame" style="aspect-ratio:${ratio}; --grid-cols:${this.data.grid_columns}; --grid-rows:${this.data.grid_rows}; background:${escapeHtml(this.data.background)}">
+            <div class="stage-ruler"><span data-render-dimensions>${outputWidth} × ${outputHeight} · ${escapeHtml(output.source)}</span><span>${this.data.slots.length} slot${this.data.slots.length === 1 ? '' : 's'}</span></div>
+            <p class="editor-preview-note">Editing preview. ${featureSupport(this.rendererStatus?.capabilities, 'labels') === true ? 'Use stream health to check playback.' : 'Camera labels are for editing; label playback is unsupported or not reported by the renderer.'} ${output.warning ? escapeHtml(output.warning) : ''} ${pixelWarning ? escapeHtml(pixelWarning) : ''} <a href="/renderer" data-route>Renderer capabilities</a></p>
+            <div class="display-frame" data-render-width="${outputWidth}" data-render-height="${outputHeight}" style="aspect-ratio:${ratio}; --grid-cols:${this.data.grid_columns}; --grid-rows:${this.data.grid_rows}; background:${escapeHtml(this.data.background)}">
               <div class="layout-canvas ${this.gridEnabled ? 'show-grid' : ''}" tabindex="0" aria-label="Layout canvas">
                 ${this.data.slots.map((slot) => this.slotHtml(slot)).join('')}
                 ${this.data.slots.length === 0 ? '<div class="canvas-empty"><div>' + icon('layout') + '</div><strong>Build your camera wall</strong><span>Click a camera, then click here; or choose a template.</span></div>' : ''}
@@ -617,6 +627,12 @@ export class LayoutEditor {
             case 'save-apply':
                 await this.save(true);
                 break;
+            case 'layout-settings':
+                this.layoutSettings();
+                break;
+            case 'save-copy':
+                this.saveCopyDialog();
+                break;
             case 'refresh-display':
                 await this.refreshDisplayStatus();
                 this.render();
@@ -658,7 +674,7 @@ export class LayoutEditor {
         }
     }
     async save(apply) {
-        if (this.busy)
+        if (this.busy || this.conflict)
             return;
         this.busy = true;
         this.host.inert = true;
@@ -668,16 +684,19 @@ export class LayoutEditor {
             if (!saved) {
                 const updated = await api(`/layouts/${this.layout.id}`, {
                     method: 'PUT',
-                    body: JSON.stringify({ data: this.data, status: 'draft' }),
+                    body: JSON.stringify({ data: this.data, display_profile_id: this.displayProfileId, status: 'draft', expected_revision: this.layout.current_revision, expected_revision_id: this.layout.revision?.id }),
                 });
                 this.acceptSavedLayout(updated);
                 saved = true;
             }
             if (apply) {
-                const result = await api(`/layouts/${this.layout.id}/activate`, { method: 'POST' });
+                const result = await api(`/layouts/${this.layout.id}/activate`, { method: 'POST', body: JSON.stringify({ expected_revision: this.layout.current_revision, expected_revision_id: this.layout.revision?.id }) });
                 this.acceptSavedLayout(result.layout);
                 this.rendererStatus = result.renderer;
-                toast(`Revision ${this.layout.current_revision} applied; check stream health for playback`, 'success');
+                await this.refreshDisplayStatus();
+                const applied = result.renderer.active_revision;
+                const newerDraft = applied != null && (applied !== this.layout.current_revision || Boolean(result.renderer.active_revision_id && result.renderer.active_revision_id !== this.layout.revision?.id));
+                toast(`Renderer accepted revision ${applied ?? 'not reported'}.${newerDraft ? ` A newer saved revision ${this.layout.current_revision} is pending and has been loaded in the editor.` : ' Check stream health for playback.'}`, newerDraft ? 'warning' : 'success');
             }
             else {
                 await this.refreshDisplayStatus();
@@ -687,9 +706,12 @@ export class LayoutEditor {
         }
         catch (error) {
             const detail = error instanceof Error ? error.message : 'Request failed';
-            this.saveError = saved && apply
-                ? `Revision ${this.layout.current_revision} is saved, but applying it failed: ${detail}. Retry Apply without saving another revision.`
-                : `Changes were not saved: ${detail}`;
+            this.conflict = layoutRevisionConflict(error);
+            this.saveError = this.conflict
+                ? `Layout conflict: ${detail} ${saved ? 'Your local version is still open here.' : 'Your unsaved edits are still open and have not been overwritten.'}${this.conflict.renderer_applied ? ' The renderer accepted the requested version before the configuration changed; check display status before applying again.' : ''} Save a separate copy to keep this version, or load the latest saved version.`
+                : saved && apply
+                    ? `Revision ${this.layout.current_revision} is saved, but applying it failed: ${detail}. Retry Apply without saving another revision.`
+                    : `Changes were not saved: ${detail}`;
             if (saved && apply)
                 await this.refreshDisplayStatus();
             toast(this.saveError, 'error');
@@ -703,35 +725,94 @@ export class LayoutEditor {
     acceptSavedLayout(layout) {
         this.layout = layout;
         this.data = cloneData(layout.revision.data);
-        this.savedData = JSON.stringify(this.data);
+        this.displayProfileId = layout.display_profile_id ?? null;
+        this.savedData = this.draftSignature();
+        this.conflict = null;
         this.history = [];
         this.historyIndex = -1;
         this.recordHistory();
     }
     async refreshDisplayStatus() {
-        try {
-            this.rendererStatus = await api('/renderer/status');
-        }
-        catch {
-            this.rendererStatus = null;
-        }
+        const [renderer, profiles] = await Promise.allSettled([
+            api('/renderer/status'), api('/display/profiles'),
+        ]);
+        this.rendererStatus = renderer.status === 'fulfilled' ? renderer.value : null;
+        if (profiles.status === 'fulfilled')
+            this.displayProfiles = profiles.value;
     }
     async revert() {
         if (this.isDirty() && !confirm('Discard unsaved layout changes and restore the saved revision?'))
             return;
+        if (this.busy)
+            return;
+        this.busy = true;
+        this.host.inert = true;
         try {
-            this.layout = await api(`/layouts/${this.layout.id}`);
-            this.data = cloneData(this.layout.revision.data);
-            this.savedData = JSON.stringify(this.data);
+            const [layout, profiles] = await Promise.all([api(`/layouts/${this.layout.id}`), api('/display/profiles')]);
+            this.acceptSavedLayout(layout);
+            this.displayProfiles = profiles;
+            this.saveError = '';
             this.selected.clear();
-            this.history = [];
-            this.historyIndex = -1;
-            this.recordHistory();
-            this.render();
-            toast('Reverted to the saved revision', 'info');
+            await this.refreshDisplayStatus();
+            toast('Loaded the latest saved revision', 'info');
         }
         catch (error) {
-            toast(error instanceof Error ? error.message : 'Unable to revert', 'error');
+            toast(error instanceof Error ? error.message : 'Unable to load the latest revision', 'error');
+        }
+        finally {
+            this.busy = false;
+            this.host.inert = false;
+            this.render();
+        }
+    }
+    layoutSettings() {
+        let read;
+        const dialog = openDialog({ title: 'Layout display settings', body: layoutOutputFields(this.data, this.displayProfileId, this.displayProfiles), submitLabel: 'Update draft settings', onSubmit: () => {
+                this.updateOutput(read());
+                return true;
+            } });
+        read = bindLayoutOutputFields(dialog, this.data, this.displayProfiles, this.rendererStatus);
+    }
+    updateOutput(edit) {
+        if (this.busy)
+            return;
+        validateLayoutOutputPlacement(this.data, edit);
+        this.displayProfileId = edit.display_profile_id;
+        this.data.output_width = edit.output_width;
+        this.data.output_height = edit.output_height;
+        this.recordHistory();
+        this.render();
+    }
+    saveCopyDialog() {
+        const draft = this.snapshot();
+        openDialog({ title: 'Save my edits as a copy', body: `<p>The other saved layout is kept. Your current geometry and display-profile choice become a separate draft.</p><label><span>Copy name</span><input class="input" name="name" required maxlength="255" value="${escapeHtml(`${this.layout.name} (my edits)`)}" /></label>`, submitLabel: 'Create copy', onSubmit: async (dialog) => {
+                const name = dialog.querySelector('[name="name"]').value.trim();
+                if (!name)
+                    throw new Error('Copy name is required');
+                const copy = await this.saveCopy(name, draft);
+                if (!this.destroyed)
+                    navigate(`/layouts/${copy.id}/edit`);
+                return true;
+            } });
+    }
+    async saveCopy(name, draft = this.snapshot()) {
+        if (this.busy)
+            throw new Error('Wait for the current request to finish');
+        this.busy = true;
+        this.host.inert = true;
+        try {
+            const data = cloneData(draft.data);
+            data.slots = data.slots.map((slot) => ({ ...slot, id: newId() }));
+            const copy = await api('/layouts', { method: 'POST', body: JSON.stringify({ name, description: this.layout.description, display_profile_id: draft.displayProfileId, data }) });
+            this.acceptSavedLayout(copy);
+            this.saveError = '';
+            toast('Your edits were saved as a separate draft', 'success');
+            return copy;
+        }
+        finally {
+            this.busy = false;
+            this.host.inert = false;
+            this.render();
         }
     }
     deleteSelected() {
@@ -778,7 +859,7 @@ export class LayoutEditor {
         this.render();
     }
     recordHistory() {
-        const snapshot = cloneData(this.data);
+        const snapshot = this.snapshot();
         const previous = this.history[this.historyIndex];
         if (previous && JSON.stringify(previous) === JSON.stringify(snapshot))
             return;
@@ -792,7 +873,9 @@ export class LayoutEditor {
         if (this.historyIndex <= 0)
             return;
         this.historyIndex -= 1;
-        this.data = cloneData(this.history[this.historyIndex]);
+        const snapshot = cloneData(this.history[this.historyIndex]);
+        this.data = snapshot.data;
+        this.displayProfileId = snapshot.displayProfileId;
         this.selected.clear();
         this.render();
     }
@@ -800,7 +883,9 @@ export class LayoutEditor {
         if (this.historyIndex >= this.history.length - 1)
             return;
         this.historyIndex += 1;
-        this.data = cloneData(this.history[this.historyIndex]);
+        const snapshot = cloneData(this.history[this.historyIndex]);
+        this.data = snapshot.data;
+        this.displayProfileId = snapshot.displayProfileId;
         this.selected.clear();
         this.render();
     }
@@ -892,7 +977,13 @@ export class LayoutEditor {
         this.previewUrls.clear();
     }
     isDirty() {
-        return JSON.stringify(this.data) !== this.savedData;
+        return this.draftSignature() !== this.savedData;
+    }
+    snapshot() {
+        return cloneData({ data: this.data, displayProfileId: this.displayProfileId });
+    }
+    draftSignature() {
+        return JSON.stringify({ data: this.data, displayProfileId: this.displayProfileId });
     }
 }
 //# sourceMappingURL=editor.js.map
