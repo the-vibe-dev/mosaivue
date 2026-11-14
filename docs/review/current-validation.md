@@ -38,7 +38,7 @@ These local checks do not qualify b4 camera playback or appliance installation. 
 
 ### Controlled appliance rollout after local integration
 
-The later [b4 live rollout](b4-live-rollout.md) records installer upgrades on the Pi 3, Ubuntu VM and ROCK Pi; Pi and ROCK Pi cold-start recovery after reboot; and seven-stream Ubuntu HDMI and ROCK Pi KMS output with advancing decoded frames. The ROCK Pi's first KMS trial failed and was rolled back before the corrected fullscreen build. Its 24-hour observations are **in progress** and the devices run two b4 source commits. PTZ hardware remains untested. These hardware results do not retroactively change the supplied review's environment-limited claims above.
+The later [b4 live rollout](b4-live-rollout.md) records installer upgrades on the Pi 3, Ubuntu VM and ROCK Pi; Pi and ROCK Pi cold-start recovery after reboot; and seven-stream Ubuntu HDMI and ROCK Pi KMS output with advancing decoded frames. The ROCK Pi's first KMS trial failed and was rolled back before the corrected fullscreen build. Final 24-hour observations are **in progress** on the same patched b4 source archive. PTZ hardware remains untested. These hardware results do not retroactively change the supplied review's environment-limited claims above.
 
 ## Scanner interpretation
 
