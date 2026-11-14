@@ -49,7 +49,7 @@ Browse the [documentation index](docs/index.md) for installation, camera setup, 
 
 ## Screenshots
 
-These retained screenshots illustrate earlier interface builds. They were not regenerated as b5 browser evidence.
+These three images match the files in the released **v0.1.0b2** source tag, verified by byte comparison on November 14, 2026. They illustrate b2 and were not regenerated as b5 browser evidence.
 
 ### Appliance dashboard
 
@@ -63,7 +63,7 @@ These retained screenshots illustrate earlier interface builds. They were not re
 
 ![Mosaivue phone remote for changing layouts and focusing a camera](docs/images/remote-mobile.png)
 
-Screenshot labels: retained interface builds, **not b5 screenshots**. Regenerate and label the exact source version before using new images as release evidence.
+Screenshot labels: **released v0.1.0b2**, not b5 screenshots. Regenerate and label the exact source version before using new images as release evidence.
 
 Regenerate these from a demo or test appliance with:
 
