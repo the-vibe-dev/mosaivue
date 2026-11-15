@@ -20,10 +20,20 @@ The supplied b5 candidate was reviewed on November 13, 2026 (America/New_York); 
 - Ruff, Python byte compilation, release check, installer rotation/path/bootstrap helpers and shell syntax checks passed.
 - Fresh source and amd64 Debian packages were built from the integrated tree; both SHA-256 sidecars verified. The source package excluded the local review archive and previous review history. Public Markdown links were checked after moving `docs/review/` into the Git-ignored `.private-reviews/` directory; none were missing.
 
+## Controlled appliance rollout after integration
+
+The final b5 source archive was rebuilt from committed source `daef72f` after an earlier staging package omitted newly added files. The complete archive SHA-256 is `d9d41f433565343b43b4de17b9ca9c21c7cf767b932fef689a28a84bb4274ec8`; all three target transfers were checksum-verified. The first Ubuntu trial on the incomplete archive had stalled video and was rolled back to a healthy b4 wall. A repeat trial recovered; the exact cause of that first playback failure is unconfirmed. Only the complete archive is used in the final b5 observations.
+
+- **Pi 3B+ / Bullseye armhf / OMXPlayer:** Source upgrade, 7/7 LIVE, zero restarts, rotation and manual Next/Previous passed. A controlled reboot returned Wi-Fi, masked rfkill units, HTTP and 7/7 playback. Its final b4 source had previously completed 24 hours with 1,441 healthy samples, zero restarts and a maximum 81.5-second sample gap.
+- **ROCK Pi 4B+ / Debian arm64 / GStreamer KMS:** Source upgrade, seven advancing streams, rotation and manual Next/Previous passed. A controlled reboot returned HTTP and a 1920×1080+0+0 KMS plane with seven advancing streams. One stream needed a postboot cold-start retry and has not grown in the initial observation. The previous b4 record reached 24 hours with no failed health samples, but its final sampling gap was 94 seconds, above a strict 90-second threshold.
+- **Ubuntu / NVIDIA / GStreamer X11:** Source upgrade retained the verified software H.264 decoder. Seven physical-output frame counters advance with HDMI-0 connected at 1920×1080, zero stream restarts in the final observation and HTTP/static-asset health. Its previous b4 observation was interrupted by host maintenance and two guest reboots, so it did not complete an uninterrupted b4 window.
+
+All three b5 installs used `--skip-packages` and retained root-only rollback snapshots. Exact-source 24-hour b5 observers are running; none has completed. OMX LIVE does not independently prove decoded-frame advancement. Physical b5 picture quality has not yet been reconfirmed by a person at the displays.
+
 ## What these results do not establish
 
-No b5 root/systemd install, ARM/native-media execution, real camera, physical HDMI, hotplug or long-run observation occurred here. The local browser run exercised a disposable test backend, not physical playback. Real different-group and root/rsync ownership cases remain skipped. Product screenshots in `docs/images/` are historical; the local editor QA screenshots are outside the repository.
+The local browser run exercised a disposable test backend; its results do not prove physical playback. A clean full-package install, actual hotplug, real different-group and root/rsync ownership cases, and completed b5 long-run observation remain open. Product screenshots in `docs/images/` are historical; the local editor QA screenshots are outside the repository.
 
-The supplied b4 record includes eight browser workflows, Pi 3 post-reboot 7/7 LIVE, Ubuntu physical 7/7 advancing streams, and ROCK Pi fullscreen 7/7 with one cold-start restart. Those are meaningful results for that exact b4 source. No completed final-source 24h observation was included, and all controlled upgrades used `--skip-packages`. PTZ remains unimplemented and physical PTZ hardware was unavailable.
+The supplied b4 record includes eight browser workflows, Pi 3 post-reboot 7/7 LIVE, Ubuntu physical 7/7 advancing streams, and ROCK Pi fullscreen 7/7 with one cold-start restart. Those are meaningful results for that exact b4 source. The later Pi 3 b4 soak completed as recorded above; earlier partial runs cannot be merged with it. PTZ remains unimplemented and physical PTZ hardware was unavailable.
 
-See the [installation guide](docs/install.md), [hardware test plan](docs/hardware-test-plan.md), and [changelog](CHANGELOG.md). The supplied review did not publish or deploy this candidate.
+See the [installation guide](docs/install.md), [hardware test plan](docs/hardware-test-plan.md), and [changelog](CHANGELOG.md). This controlled deployment does not publish a b5 release.
